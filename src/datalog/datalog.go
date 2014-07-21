@@ -18,30 +18,39 @@ package datalog
 import (
 	"bytes"
 	"errors"
-	"strconv"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 var _ = fmt.Printf
 
 // A Variable represents a placeholder in datalog.
 // Examples: X, Y
-// Note: variable names starting with digits are used internally, and should be
+// Note: variable names starting with dot are used internally, and should be
 // avoided.
 type Variable struct {
 	Name string
 }
 
+func (v *Variable) String() string {
+	return v.Name
+}
+
 var lastFreshCount = 0
 func FreshVariable() *Variable {
 	lastFreshCount++
-	return &Variable{strconv.Itoa(lastFreshCount)}
+	return &Variable{"." + strconv.Itoa(lastFreshCount)}
 }
 
 // A Constant represents a concrete value in datalog.
 // Examples: alice, bob, "Hello", 42, -3
 type Constant struct {
 	Value string
+}
+
+func (c *Constant) String() string {
+	return c.Value
 }
 
 // A Term appears as the argument of a Literal. A Term can be a Variable or a
@@ -52,6 +61,7 @@ type Constant struct {
 //  "Alice"  (a Constant)
 type Term interface {
 	isTerm()
+	String() string
 	unify(other Term, env Environment) Environment
 	unifyVariable(other *Variable, env Environment) Environment
 	unifyConstant(other *Constant, env Environment) Environment
@@ -71,12 +81,36 @@ type Literal struct {
 	id *string
 }
 
+func (l *Literal) String() string {
+	if len(l.Arg) == 0 {
+		return l.Pred.Name()
+	} else {
+		var args []string
+		for _, a := range l.Arg {
+			args = append(args, a.String())
+		}
+		return l.Pred.Name() + "(" + strings.Join(args, ", ") + ")"
+	}
+}
+
 func NewLiteral(p Predicate, arg ...Term) *Literal {
 	if p.Arity() != len(arg) {
 		// TODO(kwalsh) return error?
 		return nil;
 	}
 	return &Literal{Pred: p, Arg: arg}
+}
+
+func NewFact(p Predicate, arg ...*Constant) *Literal {
+	if p.Arity() != len(arg) {
+		// TODO(kwalsh) return error?
+		return nil;
+	}
+	targ := make([]Term, len(arg))
+	for i, e := range arg {
+		targ[i] = e
+	}
+	return &Literal{Pred: p, Arg: targ}
 }
 
 type strpack bytes.Buffer
@@ -157,6 +191,18 @@ type Clause struct {
 	id *string
 }
 
+func (c *Clause) String() string {
+	if len(c.Body) == 0 {
+		return c.Head.String()
+	} else {
+		var bodies []string
+		for _, l := range c.Body {
+			bodies = append(bodies, l.String())
+		}
+		return c.Head.String() + " :- " + strings.Join(bodies, ", ")
+	}
+}
+
 func NewClause(head *Literal, body ...*Literal) *Clause {
 	return &Clause{Head: head, Body: body}
 }
@@ -191,6 +237,7 @@ type Predicate interface {
 	Name() string // e.g. "ancestor"
 	Arity() int // e.g. 2
 	Database() []*Clause // e.g. { ancestor(alice, bob), ancestor(X, Y) :- parent(X, Y) }
+	String() string
 }
 
 // PredicateID returns a unique ID for a predicate, e.g. "ancestor/2"
@@ -206,6 +253,10 @@ type predicate struct {
 func (p *predicate) Name() string { return p.name }
 func (p *predicate) Arity() int { return p.arity }
 func (p *predicate) Database() []*Clause { return p.db }
+
+func (p *predicate) String() string {
+	return PredicateID(p)
+}
 
 func NewPredicate(name string, arity int) Predicate {
 	return &predicate{name, arity, nil}
@@ -440,17 +491,127 @@ func merge(subgoal *Subgoal) {
 // A Subgoal has a literal, a set of facts, and a list of waiters.
 type Subgoal struct {
 	literal *Literal
-	facts []*Literal
+	facts map[string]*Literal
 	waiters []*Waiter
 }
 
 func NewSubgoal(l *Literal) *Subgoal {
-	return &Subgoal{l, nil, nil}
+	return &Subgoal{l, make(map[string]*Literal), nil}
 }
 
 // A Waiter is a pair containing a subgoal and a clause.
 type Waiter struct {
-	subgoal Subgoal
-	clause Clause
+	subgoal *Subgoal
+	clause *Clause
 }
 
+func resolve(c *Clause, l *Literal) *Clause {
+	if len(c.Body) == 0 {
+		return nil
+	}
+	env := unify(c.Body[0], l.rename())
+	if env == nil {
+		return nil
+	}
+	s := &Clause{Head: c.Head.subst(env), Body: make([]*Literal, len(c.Body) - 1)}
+	for i := 0; i < len(s.Body); i++ {
+		s.Body[i] = c.Body[i+1].subst(env)
+	}
+	return s
+}
+
+func fact(s *Subgoal, l *Literal) {
+	if _, ok := s.facts[l.ID()]; !ok {
+		s.facts[l.ID()] = l
+		// notify waiters
+		for _, waiter := range s.waiters {
+			r := resolve(waiter.clause, l)
+			if r != nil {
+				addClause(waiter.subgoal, r)
+			}
+		}
+	}
+}
+
+func rule(subgoal *Subgoal, clause *Clause, selected *Literal) {
+	sg := find(selected)
+	if sg != nil {
+		sg.waiters = append(sg.waiters, &Waiter{subgoal, clause})
+		var todo []*Clause
+		for _,fact := range sg.facts {
+			r := resolve(clause, fact)
+			if r != nil {
+				todo = append(todo, r)
+			}
+		}
+		for _, c := range todo {
+			addClause(subgoal, c)
+		}
+	} else {
+		sg := NewSubgoal(selected)
+		sg.waiters = append(sg.waiters, &Waiter{subgoal, clause})
+		merge(sg)
+		search(sg)
+	}
+}
+
+func addClause(subgoal *Subgoal, c *Clause) {
+	if len(c.Body) == 0 {
+		fact(subgoal, c.Head)
+	} else {
+		rule(subgoal, c, c.Body[0])
+	}
+}
+
+func search(subgoal *Subgoal) {
+	literal := subgoal.literal
+	pred, ok := literal.Pred.(*predicate)
+	if !ok {
+		panic("datalog: primitives not yet implemented")
+	} else {
+		for _, clause := range pred.db {
+			renamed := clause.rename()
+			env := unify(literal, renamed.Head)
+			if env != nil {
+				addClause(subgoal, renamed.subst(env))
+			}
+		}
+	}
+}
+
+type Answers struct {
+	P Predicate
+	Terms [][]*Constant
+}
+
+func (a *Answers) String() string {
+	if len(a.Terms) == 0 {
+		return "<empty>"
+	}
+	var facts []string
+	for _, terms := range a.Terms {
+		facts = append(facts, NewFact(a.P, terms...).String())
+	}
+	return strings.Join(facts, "\n")
+}
+
+func Ask(literal *Literal) *Answers {
+	subgoals = make(map[string]*Subgoal)
+	subgoal := NewSubgoal(literal)
+	merge(subgoal)
+	search(subgoal)
+	subgoals = nil
+	var aterms [][]*Constant
+	for _, literal := range subgoal.facts {
+		var answer []*Constant
+		for _, t := range literal.Arg {
+			c := t.(*Constant)
+			answer = append(answer, c)
+		}
+		aterms = append(aterms, answer)
+	}
+	if len(aterms) == 0 {
+		return nil
+	}
+	return &Answers{literal.Pred, aterms}
+}

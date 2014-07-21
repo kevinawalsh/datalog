@@ -29,6 +29,7 @@ func TestTypes(t *testing.T) {
 
 	alice := &Constant{"alice"}
 	bob := &Constant{"bob"}
+	carol := &Constant{"carol"}
 	x := &Variable{"X"}
 	y := &Variable{"Y"}
 	z := &Variable{"Z"}
@@ -37,6 +38,7 @@ func TestTypes(t *testing.T) {
 	l2 := NewLiteral(ancestor, alice, bob)
 	l3 := NewLiteral(ancestor, alice, x)
 	l4 := NewLiteral(ancestor, alice, y)
+	l5 := NewLiteral(ancestor, bob, carol)
 
 	if l1.Tag() != l2.Tag() || l3.Tag() != l4.Tag() {
 		t.Fatal("tag mismatch")
@@ -60,6 +62,20 @@ func TestTypes(t *testing.T) {
 	b2 := NewLiteral(ancestor, y, z)
 	c := NewClause(h, b1, b2)
 
-	fmt.Println(c, c.ID())
+
+	err := Assert(NewClause(l1))
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	err = Assert(NewClause(l5))
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	err = Assert(c)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	a := Ask(NewLiteral(ancestor, x, y))
+	fmt.Println(a)
 }
 
