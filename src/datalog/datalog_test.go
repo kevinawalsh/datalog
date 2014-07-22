@@ -79,11 +79,11 @@ func TestTypes(t *testing.T) {
 }
 
 func TestLexer(t *testing.T) {
-	l := lex("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n" +
-									 "ancestor(alice, bob).\n" +
-									 "ancestor(X, Y)?\n")
+	l := lex("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n"+
+		"ancestor(alice, bob).\n"+
+		"ancestor(X, Y)?\n")
 	for {
-		item := l.nextItem()
+		item := l.nextToken()
 		fmt.Println(item)
 		if item.typ == itemEOF || item.typ == itemError {
 			break
@@ -92,14 +92,11 @@ func TestLexer(t *testing.T) {
 }
 
 func TestParser(t *testing.T) {
-	p := parser("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n" +
-									 "ancestor(alice, bob).\n" +
-									 "ancestor(X, Y)?\n")
-	for {
-		node, err := p.parse()
-		if err != nil {
-			t.Fatal(err.Error())
-		}
-		fmt.Println(node)
+	node, err := parse("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n"+
+		"ancestor(alice, bob).\n"+
+		"ancestor(X, Y)?\n")
+	if err != nil {
+		t.Fatal(err.Error())
 	}
+	fmt.Println(node)
 }

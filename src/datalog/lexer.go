@@ -22,9 +22,9 @@ package datalog
 
 import (
 	"fmt"
+	"strings"
 	"unicode"
 	"unicode/utf8"
-	"strings"
 )
 
 // token represents a value returned from the lexer.
@@ -43,11 +43,11 @@ type itemType int
 const (
 	itemError itemType = iota // error occurred; value is text of error
 	itemEOF
-	itemQuestion   // "?"
-	itemWhen       // ":-"
-	itemLP         // "("
-	itemRP         // ")"
-	itemComma      // ","
+	itemQuestion // "?"
+	itemWhen     // ":-"
+	itemLP       // "("
+	itemRP       // ")"
+	itemComma    // ","
 	// itemEqual   // "="
 	itemDot        // "."
 	itemTilde      // "~"

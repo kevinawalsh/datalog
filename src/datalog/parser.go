@@ -48,11 +48,11 @@ func (t nodeType) Type() nodeType {
 }
 
 const (
-	nodeProgram nodeType = iota    // (assertion | retraction | query)*
-	nodeAction                     // clause [ "." | "~" ]
-	nodeQuery                      // literal "?"
-	nodeClause                     // literal | literal ":-" literal ("," literal)*
-	nodeLiteral                    // predsym | predsym "(" term ("," term)* ")"
+	nodeProgram nodeType = iota // (assertion | retraction | query)*
+	nodeAction                  // clause [ "." | "~" ]
+	nodeQuery                   // literal "?"
+	nodeClause                  // literal | literal ":-" literal ("," literal)*
+	nodeLiteral                 // predsym | predsym "(" term ("," term)* ")"
 	// nodePredSym                 // identifier | string
 	// nodeTerm                    // variable | constant
 	// nodeConstant                // identifier | string
@@ -118,6 +118,7 @@ type actionNode struct {
 }
 
 type actionType bool
+
 const actionAssert actionType = true
 const actionRetract actionType = false
 
@@ -225,9 +226,9 @@ func (n *leafNode) Copy() node {
 
 // parser holds the state of the recursive descent parser.
 type parser struct {
-	lex *lexer
-	pos pos
-	token token			// single-token lookahead.
+	lex   *lexer
+	pos   pos
+	token token // single-token lookahead.
 }
 
 func (parser *parser) next() {
@@ -317,10 +318,10 @@ func parse(name, input string) (node, error) {
 					}
 				}
 				if parser.token.typ == itemDot {
-					pgm.append(newAction(parser.pos, newClause(parser.pos, literal), actionAssert))
+					pgm.append(newAction(parser.pos, clause, actionAssert))
 					parser.next()
 				} else if parser.token.typ == itemTilde {
-					pgm.append(newAction(parser.pos, newClause(parser.pos, literal), actionRetract))
+					pgm.append(newAction(parser.pos, clause, actionRetract))
 					parser.next()
 				} else {
 					return nil, fmt.Errorf("datalog: unexpected: %v", parser.token)
@@ -329,4 +330,3 @@ func parse(name, input string) (node, error) {
 		}
 	}
 }
-
