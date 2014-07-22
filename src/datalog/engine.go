@@ -38,9 +38,10 @@ func NewEngine() *Engine {
 	}
 }
 
-func (e *Engine) Process(name, input string) {
+func (e *Engine) Process(name, input string) (assertions, retractions, queries, errors int) {
 	pgm, err := parse(name, input)
 	if err != nil {
+		errors++
 		fmt.Println("datalog: %s", err.Error())
 		return
 	}
@@ -48,45 +49,128 @@ func (e *Engine) Process(name, input string) {
 		switch node := node.(type) {
 		case *actionNode:
 			if node.action == actionAssert {
-				err = e.Assert(node.clause)
+				err = e.assert(node.clause, true)
+				assertions++
 			} else {
-				err = e.Retract(node.clause)
+				err = e.retract(node.clause, true)
+				retractions++
 			}
 		case *queryNode:
-			err = e.Query(node.literal)
+			err = e.query(node.literal)
+			queries++
 		default:
 				panic("not reached")
 		}
 		if err != nil {
 			fmt.Printf("datalog: %s:%d: %s\n", name, node.Position(), err.Error())
+			errors++
 		} else {
 			fmt.Printf("OK\n")
 		}
 	}
+	return
 }
 
-func (e *Engine) Assert(clause *clauseNode) error {
+func (e *Engine) Batch(name, input string) (assertions, retractions int, err error) {
+	pgm, err := parse(name, input)
+	if err != nil {
+		return
+	}
+	for _, node := range pgm.nodeList {
+		switch node := node.(type) {
+		case *actionNode:
+			if node.action == actionAssert {
+				err = e.assert(node.clause, false)
+				assertions++
+			} else {
+				err = e.retract(node.clause, false)
+				retractions++
+			}
+		case *queryNode:
+			// ignore
+		default:
+				panic("not reached")
+		}
+		if err != nil {
+			return
+		}
+	}
+	return
+}
+
+func (e *Engine) assert(clause *clauseNode, interactive bool) error {
 	c := e.recoverClause(clause)
-	fmt.Printf("Assert: %s\n", c)
+	if interactive {
+		fmt.Printf("Assert: %s\n", c)
+	}
 	err := c.Assert()
 	e.track(c, +1)
 	return err
 }
 
-func (e *Engine) Retract(clause *clauseNode) error {
+func (e *Engine) retract(clause *clauseNode, interactive bool) error {
 	c := e.recoverClause(clause)
-	fmt.Printf("Retract: %s\n", c)
+	if interactive {
+		fmt.Printf("Retract: %s\n", c)
+	}
 	err := c.Retract()
 	e.track(c, -1)
 	return err
 }
 
-func (e *Engine) Query(literal *literalNode) error {
+func (e *Engine) query(literal *literalNode) error {
 	l := e.recoverLiteral(literal)
 	fmt.Printf("Query: %s\n", l)
 	a := l.Query()
 	fmt.Println(a)
 	return nil
+}
+
+func (e *Engine) Assert(assertion string) error {
+	pgm, err := parse("assert", assertion)
+	if err != nil {
+		return err
+	}
+	if len(pgm.nodeList) != 1 {
+		return fmt.Errorf("datalog: expecting one assertion: %s", assertion)
+	}
+	node, ok := pgm.nodeList[0].(*actionNode)
+	if !ok {
+		return fmt.Errorf("datalog: expecting assertion: %s", assertion)
+	}
+	return e.assert(node.clause, false)
+}
+
+func (e *Engine) Retract(retraction string) error {
+	pgm, err := parse("retract", retraction)
+	if err != nil {
+		return err
+	}
+	if len(pgm.nodeList) != 1 {
+		return fmt.Errorf("datalog: expecting one retraction: %s", retraction)
+	}
+	node, ok := pgm.nodeList[0].(*actionNode)
+	if !ok {
+		return fmt.Errorf("datalog: expecting retraction: %s", retraction)
+	}
+	return e.retract(node.clause, false)
+}
+
+func (e *Engine) Query(query string) (bool, error) {
+	pgm, err := parse("query", query)
+	if err != nil {
+		return false, err
+	}
+	if len(pgm.nodeList) != 1 {
+		return false, fmt.Errorf("datalog: expecting one query: %s", query)
+	}
+	node, ok := pgm.nodeList[0].(*queryNode)
+	if !ok {
+		return false, fmt.Errorf("datalog: expecting query: %s", query)
+	}
+	l := e.recoverLiteral(node.literal)
+	supported := l.Query() != nil
+	return supported, nil
 }
 
 func (e *Engine) recoverClause(clause *clauseNode) *Clause {

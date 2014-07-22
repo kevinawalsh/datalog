@@ -205,28 +205,21 @@ func NewClause(head *Literal, body ...*Literal) *Clause {
 	return &Clause{Head: head, Body: body}
 }
 
-func (c *Clause) Fact() bool {
-	return len(c.Body) == 0
+// used only for retract
+func (c *Clause) identical(other *Clause) bool {
+	if c.Head.ID() != other.Head.ID() {
+		return false
+	}
+	if len(c.Body) != len(other.Body) {
+		return false
+	}
+	for i, _ := range c.Body {
+		if c.Body[i].ID() != other.Body[i].ID() {
+			return false
+		}
+	}
+	return true
 }
-
-func (c *Clause) Rule() bool {
-	return len(c.Body) > 0
-}
-
-// TOOD(kwalsh) Don't know what this is for yet.
-// func (c *Clause) ID() string {
-// 	if c.id != nil {
-// 		return *c.id
-// 	}
-// 	var buf strpack
-// 	buf.Add(c.Head.ID())
-// 	for _, e := range c.Body {
-// 		buf.Add(e.ID())
-// 	}
-// 	id := buf.String()
-// 	c.id = &id
-// 	return id
-// }
 
 // A Predicate represents a logical relation, e.g. the "ancestor" relation.
 // Every predicate should have a name or arity different from every other
@@ -281,7 +274,7 @@ func (c *Clause) Retract() error {
 		return errors.New("datalog: can't modify primitive predicate")
 	}
 	for i, e := range p.db {
-		if e == c {
+		if e.identical(c) {
 			n := len(p.db)
 			p.db[i] = p.db[n-1]
 			p.db = p.db[0 : n-1]
