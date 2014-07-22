@@ -23,8 +23,6 @@ import (
 	"testing"
 )
 
-var _ = fmt.Println
-
 func TestTypes(t *testing.T) {
 	ancestor := NewPredicate("ancestor", 2)
 	if PredicateID(ancestor) != "ancestor/2" {
@@ -79,7 +77,9 @@ func TestTypes(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 	a := NewLiteral(ancestor, x, y).Query()
-	fmt.Println(a)
+	if a == nil {
+		t.Fatal("query failed")
+	}
 }
 
 func TestLexer(t *testing.T) {
@@ -88,8 +88,11 @@ func TestLexer(t *testing.T) {
 		"ancestor(X, Y)?\n")
 	for {
 		item := l.nextToken()
-		fmt.Println(item)
-		if item.typ == itemEOF || item.typ == itemError {
+		// fmt.Println(item)
+		if item.typ == itemError {
+			t.Fatal("lex error: %v", item)
+		}
+		if item.typ == itemEOF {
 			break
 		}
 	}
@@ -102,7 +105,10 @@ func TestParser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	fmt.Println(node)
+	if node == nil {
+		t.Fatal("missing parse node")
+	}
+	// fmt.Println(node)
 }
 
 func TestEngine(t *testing.T) {
@@ -168,7 +174,7 @@ func TestPath(t *testing.T) {
 	filename := "test.dl"
 
 	n := 100
-	e := 500
+	e := 200
 	f, err := os.Create(filename)
 	if err != nil {
 		t.Fatal(err.Error())
@@ -195,7 +201,7 @@ func TestPath(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	trials := 1
+	trials := 5
 	qx := make([]int, trials)
 	qy := make([]int, trials)
 	qa := make([]bool, trials)
