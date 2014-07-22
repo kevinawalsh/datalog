@@ -130,6 +130,7 @@ func (b *strpack) String() string {
 // Tag returns a "variant tag" for a Literal, such that two Literals have the
 // same variant tag if and only if they have are same predicate (both name and
 // arity) and the same terms modulo variable renaming.
+// TODO(kwalsh) Used by query subgoals map.
 func (l *Literal) Tag() string {
 	if l.tag != nil {
 		return *l.tag
@@ -159,6 +160,8 @@ func (l *Literal) Tag() string {
 // ID returns an ID for a Literal, such that two Literals have the same ID if
 // and only if they have are same predicate (both name and arity) and the same
 // terms with identical variable names.
+// TODO(kwalsh) Used by subgoal.facts[] map.
+// TODO(kwalsh) Used by revoke (but that could be pushed to caller).
 func (l *Literal) ID() string {
 	if l.id != nil {
 		return *l.id
@@ -469,20 +472,24 @@ func (c *Clause) Safe() bool {
 // 	return env
 // }
 
-var subgoals map[string]*Subgoal
+// TODO(kwalsh) This map uses Literal.Tag() to group literals that have the same
+// structure.
+type querySubgoals map[string]*Subgoal
 
-func find(l *Literal) *Subgoal {
+func (subgoals querySubgoals) find(l *Literal) *Subgoal {
 	subgoal, _ := subgoals[l.Tag()]
 	return subgoal
 }
 
-func merge(subgoal *Subgoal) {
+func (subgoals querySubgoals) merge(subgoal *Subgoal) {
 	subgoals[subgoal.literal.Tag()] = subgoal
 }
 
 // A Subgoal has a literal, a set of facts, and a list of waiters.
 type Subgoal struct {
 	literal *Literal
+// TODO(kwalsh) This map here and the fact() function below implement a quick way
+// to filter out identical literals by relying on Literal.ID().
 	facts   map[string]*Literal
 	waiters []*Waiter
 }
@@ -512,21 +519,22 @@ func resolve(c *Clause, l *Literal) *Clause {
 	return s
 }
 
-func fact(s *Subgoal, l *Literal) {
+
+func (q querySubgoals) fact(s *Subgoal, l *Literal) {
 	if _, ok := s.facts[l.ID()]; !ok {
 		s.facts[l.ID()] = l
 		// notify waiters
 		for _, waiter := range s.waiters {
 			r := resolve(waiter.clause, l)
 			if r != nil {
-				addClause(waiter.subgoal, r)
+				q.addClause(waiter.subgoal, r)
 			}
 		}
 	}
 }
 
-func rule(subgoal *Subgoal, clause *Clause, selected *Literal) {
-	sg := find(selected)
+func (q querySubgoals) rule(subgoal *Subgoal, clause *Clause, selected *Literal) {
+	sg := q.find(selected)
 	if sg != nil {
 		sg.waiters = append(sg.waiters, &Waiter{subgoal, clause})
 		var todo []*Clause
@@ -537,25 +545,25 @@ func rule(subgoal *Subgoal, clause *Clause, selected *Literal) {
 			}
 		}
 		for _, c := range todo {
-			addClause(subgoal, c)
+			q.addClause(subgoal, c)
 		}
 	} else {
 		sg := NewSubgoal(selected)
 		sg.waiters = append(sg.waiters, &Waiter{subgoal, clause})
-		merge(sg)
-		search(sg)
+		q.merge(sg)
+		q.search(sg)
 	}
 }
 
-func addClause(subgoal *Subgoal, c *Clause) {
+func (q querySubgoals) addClause(subgoal *Subgoal, c *Clause) {
 	if len(c.Body) == 0 {
-		fact(subgoal, c.Head)
+		q.fact(subgoal, c.Head)
 	} else {
-		rule(subgoal, c, c.Body[0])
+		q.rule(subgoal, c, c.Body[0])
 	}
 }
 
-func search(subgoal *Subgoal) {
+func (q querySubgoals) search(subgoal *Subgoal) {
 	literal := subgoal.literal
 	pred, ok := literal.Pred.(*predicate)
 	if !ok {
@@ -565,7 +573,7 @@ func search(subgoal *Subgoal) {
 			renamed := clause.rename()
 			env := unify(literal, renamed.Head)
 			if env != nil {
-				addClause(subgoal, renamed.subst(env))
+				q.addClause(subgoal, renamed.subst(env))
 			}
 		}
 	}
@@ -588,11 +596,12 @@ func (a *Answers) String() string {
 }
 
 func (l *Literal) Query() *Answers {
-	subgoals = make(map[string]*Subgoal)
+	q := make(querySubgoals)
 	subgoal := NewSubgoal(l)
-	merge(subgoal)
-	search(subgoal)
-	subgoals = nil
+	q.merge(subgoal)
+	q.search(subgoal)
+	q = nil
+
 	var aterms [][]*Constant
 	for _, literal := range subgoal.facts {
 		var answer []*Constant
