@@ -186,7 +186,7 @@ func (l *Literal) ID() string {
 type Clause struct {
 	Head *Literal
 	Body []*Literal
-	id   *string
+	// id   *string
 }
 
 func (c *Clause) String() string {

@@ -27,14 +27,14 @@ import (
 type Engine struct {
 	Term map[string]Term // variables, constants, and identifiers
 	Predicate map[string]Predicate // predicates in use
-	refcnt map[interface{}]int
+	refCount map[interface{}]int
 }
 
 func NewEngine() *Engine {
 	return &Engine{
 		Term: make(map[string]Term),
 		Predicate: make(map[string]Predicate),
-		refcnt: make(map[interface{}]int),
+		refCount: make(map[interface{}]int),
 	}
 }
 
@@ -68,13 +68,17 @@ func (e *Engine) Process(name, input string) {
 func (e *Engine) Assert(clause *clauseNode) error {
 	c := e.recoverClause(clause)
 	fmt.Printf("Assert: %s\n", c)
-	return c.Assert()
+	err := c.Assert()
+	e.track(c, +1)
+	return err
 }
 
 func (e *Engine) Retract(clause *clauseNode) error {
 	c := e.recoverClause(clause)
 	fmt.Printf("Retract: %s\n", c)
-	return c.Retract()
+	err := c.Retract()
+	e.track(c, -1)
+	return err
 }
 
 func (e *Engine) Query(literal *literalNode) error {
@@ -123,4 +127,31 @@ func (e *Engine) recoverLiteral(literal *literalNode) *Literal {
 		arg[i] = t
 	}
 	return NewLiteral(p, arg...)
+}
+
+func (e *Engine) track(c *Clause, inc int) {
+	e.trackLiteral(c.Head, inc)
+	for _, l := range c.Body {
+		e.trackLiteral(l, inc)
+	}
+}
+
+func (e *Engine) trackLiteral(l *Literal, inc int) {
+	e.trackObject(l.Pred, inc)
+	for _, t := range l.Arg {
+		e.trackObject(t, inc)
+	}
+}
+
+func (e *Engine) trackObject(obj interface{}, inc int) {
+	count, ok := e.refCount[obj]
+	if !ok {
+		count = 0
+	}
+	count += inc
+	if count <= 0 {
+		delete(e.refCount, obj)
+	} else {
+		e.refCount[obj] = count
+	}
 }
