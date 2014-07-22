@@ -12,18 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// A Datalog interpreter.
+// A Datalog engine.
 package datalog
 
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 )
-
-var _ = fmt.Printf
 
 // A Variable represents a placeholder in datalog.
 // Examples: X, Y
@@ -38,6 +35,7 @@ func (v *Variable) String() string {
 }
 
 var lastFreshCount = 0
+
 func FreshVariable() *Variable {
 	lastFreshCount++
 	return &Variable{"." + strconv.Itoa(lastFreshCount)}
@@ -66,6 +64,7 @@ type Term interface {
 	unifyVariable(other *Variable, env Environment) Environment
 	unifyConstant(other *Constant, env Environment) Environment
 }
+
 func (v *Variable) isTerm() {}
 func (c *Constant) isTerm() {}
 
@@ -76,9 +75,9 @@ func (c *Constant) isTerm() {}
 //    ancestor(eve, X)
 type Literal struct {
 	Pred Predicate
-	Arg []Term
-	tag *string
-	id *string
+	Arg  []Term
+	tag  *string
+	id   *string
 }
 
 func (l *Literal) String() string {
@@ -96,7 +95,7 @@ func (l *Literal) String() string {
 func NewLiteral(p Predicate, arg ...Term) *Literal {
 	if p.Arity() != len(arg) {
 		// TODO(kwalsh) return error?
-		return nil;
+		return nil
 	}
 	return &Literal{Pred: p, Arg: arg}
 }
@@ -104,7 +103,7 @@ func NewLiteral(p Predicate, arg ...Term) *Literal {
 func NewFact(p Predicate, arg ...*Constant) *Literal {
 	if p.Arity() != len(arg) {
 		// TODO(kwalsh) return error?
-		return nil;
+		return nil
 	}
 	targ := make([]Term, len(arg))
 	for i, e := range arg {
@@ -157,7 +156,6 @@ func (l *Literal) Tag() string {
 	return tag
 }
 
-
 // ID returns an ID for a Literal, such that two Literals have the same ID if
 // and only if they have are same predicate (both name and arity) and the same
 // terms with identical variable names.
@@ -188,7 +186,7 @@ func (l *Literal) ID() string {
 type Clause struct {
 	Head *Literal
 	Body []*Literal
-	id *string
+	id   *string
 }
 
 func (c *Clause) String() string {
@@ -234,8 +232,8 @@ func (c *Clause) ID() string {
 // Every predicate should have a name or arity different from every other
 // predicate.
 type Predicate interface {
-	Name() string // e.g. "ancestor"
-	Arity() int // e.g. 2
+	Name() string        // e.g. "ancestor"
+	Arity() int          // e.g. 2
 	Database() []*Clause // e.g. { ancestor(alice, bob), ancestor(X, Y) :- parent(X, Y) }
 	String() string
 }
@@ -246,12 +244,13 @@ func PredicateID(p Predicate) string {
 }
 
 type predicate struct {
-	name string
+	name  string
 	arity int
-	db []*Clause
+	db    []*Clause
 }
-func (p *predicate) Name() string { return p.name }
-func (p *predicate) Arity() int { return p.arity }
+
+func (p *predicate) Name() string        { return p.name }
+func (p *predicate) Arity() int          { return p.arity }
 func (p *predicate) Database() []*Clause { return p.db }
 
 func (p *predicate) String() string {
@@ -285,14 +284,14 @@ func Retract(c *Clause) error {
 		if e == c {
 			n := len(p.db)
 			p.db[i] = p.db[n-1]
-			p.db = p.db[0:n-1]
+			p.db = p.db[0 : n-1]
 			return nil
 		}
 	}
 	return errors.New("datalog: can't retract un-asserted clause")
 }
 
-// An Environment maps Variables to Terms. 
+// An Environment maps Variables to Terms.
 type Environment map[*Variable]Term
 
 // subst creates a new literal by mapping variables according to an environment.
@@ -491,7 +490,7 @@ func merge(subgoal *Subgoal) {
 // A Subgoal has a literal, a set of facts, and a list of waiters.
 type Subgoal struct {
 	literal *Literal
-	facts map[string]*Literal
+	facts   map[string]*Literal
 	waiters []*Waiter
 }
 
@@ -502,7 +501,7 @@ func NewSubgoal(l *Literal) *Subgoal {
 // A Waiter is a pair containing a subgoal and a clause.
 type Waiter struct {
 	subgoal *Subgoal
-	clause *Clause
+	clause  *Clause
 }
 
 func resolve(c *Clause, l *Literal) *Clause {
@@ -513,7 +512,7 @@ func resolve(c *Clause, l *Literal) *Clause {
 	if env == nil {
 		return nil
 	}
-	s := &Clause{Head: c.Head.subst(env), Body: make([]*Literal, len(c.Body) - 1)}
+	s := &Clause{Head: c.Head.subst(env), Body: make([]*Literal, len(c.Body)-1)}
 	for i := 0; i < len(s.Body); i++ {
 		s.Body[i] = c.Body[i+1].subst(env)
 	}
@@ -538,7 +537,7 @@ func rule(subgoal *Subgoal, clause *Clause, selected *Literal) {
 	if sg != nil {
 		sg.waiters = append(sg.waiters, &Waiter{subgoal, clause})
 		var todo []*Clause
-		for _,fact := range sg.facts {
+		for _, fact := range sg.facts {
 			r := resolve(clause, fact)
 			if r != nil {
 				todo = append(todo, r)
@@ -580,7 +579,7 @@ func search(subgoal *Subgoal) {
 }
 
 type Answers struct {
-	P Predicate
+	P     Predicate
 	Terms [][]*Constant
 }
 

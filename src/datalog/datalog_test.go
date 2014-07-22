@@ -62,7 +62,6 @@ func TestTypes(t *testing.T) {
 	b2 := NewLiteral(ancestor, y, z)
 	c := NewClause(h, b1, b2)
 
-
 	err := Assert(NewClause(l1))
 	if err != nil {
 		t.Fatal(err.Error())
@@ -79,3 +78,28 @@ func TestTypes(t *testing.T) {
 	fmt.Println(a)
 }
 
+func TestLexer(t *testing.T) {
+	l := lex("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n" +
+									 "ancestor(alice, bob).\n" +
+									 "ancestor(X, Y)?\n")
+	for {
+		item := l.nextItem()
+		fmt.Println(item)
+		if item.typ == itemEOF || item.typ == itemError {
+			break
+		}
+	}
+}
+
+func TestParser(t *testing.T) {
+	p := parser("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n" +
+									 "ancestor(alice, bob).\n" +
+									 "ancestor(X, Y)?\n")
+	for {
+		node, err := p.parse()
+		if err != nil {
+			t.Fatal(err.Error())
+		}
+		fmt.Println(node)
+	}
+}
