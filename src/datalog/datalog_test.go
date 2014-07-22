@@ -62,19 +62,19 @@ func TestTypes(t *testing.T) {
 	b2 := NewLiteral(ancestor, y, z)
 	c := NewClause(h, b1, b2)
 
-	err := Assert(NewClause(l1))
+	err := NewClause(l1).Assert()
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	err = Assert(NewClause(l5))
+	err = NewClause(l5).Assert()
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	err = Assert(c)
+	err = c.Assert()
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	a := Ask(NewLiteral(ancestor, x, y))
+	a := NewLiteral(ancestor, x, y).Query()
 	fmt.Println(a)
 }
 
@@ -99,4 +99,18 @@ func TestParser(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 	fmt.Println(node)
+}
+
+func TestEngine(t *testing.T) {
+	e := NewEngine()
+	input := `
+		ancestor(alice, bob).
+		ancestor(X, Y)?
+		ancestor(bob, carol).
+		ancestor(X, Y)?
+		ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).
+		ancestor(X, Y)?
+		ancestor(X)?
+		`
+	e.Process("test", input)
 }

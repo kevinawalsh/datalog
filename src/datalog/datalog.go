@@ -214,19 +214,19 @@ func (c *Clause) Rule() bool {
 }
 
 // TOOD(kwalsh) Don't know what this is for yet.
-func (c *Clause) ID() string {
-	if c.id != nil {
-		return *c.id
-	}
-	var buf strpack
-	buf.Add(c.Head.ID())
-	for _, e := range c.Body {
-		buf.Add(e.ID())
-	}
-	id := buf.String()
-	c.id = &id
-	return id
-}
+// func (c *Clause) ID() string {
+// 	if c.id != nil {
+// 		return *c.id
+// 	}
+// 	var buf strpack
+// 	buf.Add(c.Head.ID())
+// 	for _, e := range c.Body {
+// 		buf.Add(e.ID())
+// 	}
+// 	id := buf.String()
+// 	c.id = &id
+// 	return id
+// }
 
 // A Predicate represents a logical relation, e.g. the "ancestor" relation.
 // Every predicate should have a name or arity different from every other
@@ -261,7 +261,7 @@ func NewPredicate(name string, arity int) Predicate {
 	return &predicate{name, arity, nil}
 }
 
-func Assert(c *Clause) error {
+func (c *Clause) Assert() error {
 	if !c.Safe() {
 		return errors.New("datalog: can't assert unsafe clause")
 	}
@@ -274,7 +274,7 @@ func Assert(c *Clause) error {
 	return nil
 }
 
-func Retract(c *Clause) error {
+func (c *Clause) Retract() error {
 	p, ok := c.Head.Pred.(*predicate)
 	if !ok {
 		// ignore?
@@ -594,9 +594,9 @@ func (a *Answers) String() string {
 	return strings.Join(facts, "\n")
 }
 
-func Ask(literal *Literal) *Answers {
+func (l *Literal) Query() *Answers {
 	subgoals = make(map[string]*Subgoal)
-	subgoal := NewSubgoal(literal)
+	subgoal := NewSubgoal(l)
 	merge(subgoal)
 	search(subgoal)
 	subgoals = nil
@@ -612,5 +612,5 @@ func Ask(literal *Literal) *Answers {
 	if len(aterms) == 0 {
 		return nil
 	}
-	return &Answers{literal.Pred, aterms}
+	return &Answers{l.Pred, aterms}
 }

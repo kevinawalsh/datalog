@@ -113,7 +113,7 @@ func (n *programNode) Copy() node {
 type actionNode struct {
 	nodeType
 	pos
-	clause node
+	clause *clauseNode
 	action actionType
 }
 
@@ -122,7 +122,7 @@ type actionType bool
 const actionAssert actionType = true
 const actionRetract actionType = false
 
-func newAction(pos pos, clause node, action actionType) *actionNode {
+func newAction(pos pos, clause *clauseNode, action actionType) *actionNode {
 	return &actionNode{nodeAction, pos, clause, action}
 }
 
@@ -135,17 +135,17 @@ func (n *actionNode) String() string {
 }
 
 func (n *actionNode) Copy() node {
-	return &actionNode{nodeAction, n.pos, n.clause.Copy(), n.action}
+	return &actionNode{nodeAction, n.pos, n.clause.Copy().(*clauseNode), n.action}
 }
 
 // queryNode holds a literal.
 type queryNode struct {
 	nodeType
 	pos
-	literal node
+	literal *literalNode
 }
 
-func newQuery(pos pos, literal node) *queryNode {
+func newQuery(pos pos, literal *literalNode) *queryNode {
 	return &queryNode{nodeQuery, pos, literal}
 }
 
@@ -154,18 +154,18 @@ func (n *queryNode) String() string {
 }
 
 func (n *queryNode) Copy() node {
-	return &queryNode{nodeQuery, n.pos, n.literal.Copy()}
+	return &queryNode{nodeQuery, n.pos, n.literal.Copy().(*literalNode)}
 }
 
-// clauseNode holds a head clause and a sequence of body clauses.
+// clauseNode holds a head literal and a sequence of body literals.
 type clauseNode struct {
 	nodeType
 	pos
-	head node
+	head *literalNode
 	nodeList
 }
 
-func newClause(pos pos, head node) *clauseNode {
+func newClause(pos pos, head *literalNode) *clauseNode {
 	return &clauseNode{nodeClause, pos, head, nil}
 }
 
@@ -178,7 +178,7 @@ func (n *clauseNode) String() string {
 }
 
 func (n *clauseNode) Copy() node {
-	return &clauseNode{nodeClause, n.pos, n.head.Copy(), n.nodeList.dup()}
+	return &clauseNode{nodeClause, n.pos, n.head.Copy().(*literalNode), n.nodeList.dup()}
 }
 
 // literalNode holds a predsym and a sequence of terms.
@@ -252,7 +252,7 @@ func (parser *parser) parseTerm() (node, error) {
 	return n, nil
 }
 
-func (parser *parser) parseLiteral() (node, error) {
+func (parser *parser) parseLiteral() (*literalNode, error) {
 	if parser.token.typ != itemIdentifier && parser.token.typ != itemString {
 		return nil, fmt.Errorf("datalog: expecting identifier or string, found: %v", parser.token)
 	}
@@ -282,7 +282,7 @@ func (parser *parser) parseLiteral() (node, error) {
 	return literal, nil
 }
 
-func parse(name, input string) (node, error) {
+func parse(name, input string) (*programNode, error) {
 	l := lex(name, input)
 	parser := &parser{lex: l}
 	parser.next()
