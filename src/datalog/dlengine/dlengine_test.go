@@ -21,7 +21,6 @@ import (
 	"math/rand"
 	"os"
 	"testing"
-	"reflect"
 )
 
 func TestLexer(t *testing.T) {

@@ -295,8 +295,7 @@ func (e *Engine) recoverLiteral(literal *literalNode) *datalog.Literal {
 		}
 		arg[i] = t
 	}
-	l, _ := datalog.NewLiteral(p, arg...)
-	return l
+	return datalog.NewLiteral(p, arg...)
 }
 
 func (e *Engine) track(c *datalog.Clause, inc int) {

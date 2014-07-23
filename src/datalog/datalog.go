@@ -249,8 +249,18 @@ func (p * DistinctPred) arity() int {
 
 // DBPred holds a predicate that is defined by a database of facts and rules.
 type DBPred struct {
-	db []*Clause
+	database []*Clause
 	DistinctPred
+}
+
+// dbPred is trickery to allow dynamic testing for embedded DBPred
+// TODO(kwalsh) remove this hack when adding custom predicates
+type dbPred interface {
+	db() *[]*Clause
+}
+
+func (p *DBPred) db() *[]*Clause {
+	return &p.database
 }
 
 // Assert introduces a clause into the relevant database. The head predicate
@@ -259,11 +269,11 @@ func (c *Clause) Assert() error {
 	if !c.Safe() {
 		return errors.New("datalog: can't assert unsafe clause")
 	}
-	p, ok := c.Head.Pred.(*DBPred)
+	p, ok := c.Head.Pred.(dbPred)
 	if !ok {
 		return errors.New("datalog: can't modify primitive predicate")
 	}
-	p.db = append(p.db, c)
+	*p.db() = append(*p.db(), c)
 	return nil
 }
 
@@ -283,19 +293,40 @@ func (c *Clause) tag() string {
 // structurally identical clauses modulo variable renaming. The head predicate
 // must be a DBPred, otherwise an error is returned.
 func (c *Clause) Retract() error {
-	p, ok := c.Head.Pred.(*DBPred)
+	p, ok := c.Head.Pred.(dbPred)
 	if !ok {
 		return errors.New("datalog: can't modify primitive predicate")
 	}
 	tag := c.tag()
-	for i := 0; i < len(p.db); i++ {
-		if p.db[i].tag() == tag {
-			n := len(p.db)
-			p.db[i], p.db[n-1], p.db = p.db[n-1], nil, p.db[:n-1]
+	for i := 0; i < len(*p.db()); i++ {
+		if (*p.db())[i].tag() == tag {
+			n := len(*p.db())
+			(*p.db())[i], (*p.db())[n-1], *p.db() = (*p.db())[n-1], nil, (*p.db())[:n-1]
 			i--
 		}
 	}
 	return nil
+}
+
+// RetractOne removes one instance of a clause from the relevant database, or
+// one structurally identical clause modulo variable renaming. The head
+// predicate must be a DBPred, otherwise an error is returned. If no matching
+// clause is found, an error is returned.
+func (c *Clause) RetractOne() error {
+	p, ok := c.Head.Pred.(dbPred)
+	if !ok {
+		return errors.New("datalog: can't modify primitive predicate")
+	}
+	bodyLen := len(c.Body)  // check body len to avoid some tag calculations
+	tag := c.tag()
+	for i := 0; i < len(*p.db()); i++ {
+		if len((*p.db())[i].Body) == bodyLen && (*p.db())[i].tag() == tag {
+			n := len(*p.db())
+			(*p.db())[i], (*p.db())[n-1], *p.db() = (*p.db())[n-1], nil, (*p.db())[:n-1]
+			return nil
+		}
+	}
+	return errors.New("datalog: retract found no matching clauses")
 }
 
 // Answers to a query are facts.
@@ -330,27 +361,6 @@ func (l *Literal) Query() Answers {
 		i++
 	}
 	return a
-}
-
-// RetractOne removes one instance of a clause from the relevant database, or
-// one structurally identical clause modulo variable renaming. The head
-// predicate must be a DBPred, otherwise an error is returned. If no matching
-// clause is found, an error is returned.
-func (c *Clause) RetractOne() error {
-	p, ok := c.Head.Pred.(*DBPred)
-	if !ok {
-		return errors.New("datalog: can't modify primitive predicate")
-	}
-	bodyLen := len(c.Body)  // check body len to avoid some tag calculations
-	tag := c.tag()
-	for i := 0; i < len(p.db); i++ {
-		if len(p.db[i].Body) == bodyLen && p.db[i].tag() == tag {
-			n := len(p.db)
-			p.db[i], p.db[n-1], p.db = p.db[n-1], nil, p.db[:n-1]
-			return nil
-		}
-	}
-	return errors.New("datalog: retract found no matching clauses")
 }
 
 // An env maps variables to terms. It is used for substitutions.
@@ -464,12 +474,10 @@ func unify(a, b *Literal) env {
 }
 
 // drop creates a new clause by dropping d leading parts from the body, then
-// applying env to head and to each remaining body part.
+// applying env to head and to each remaining body part. Caller must ensure
+// len(c.Body) >= d.
 func (c *Clause) drop(d int, e env) *Clause {
 	n := len(c.Body) - d
-	if n < 0 {
-		panic("not reached?")
-	}
 	s := &Clause{
 		Head: c.Head.subst(e),
 		Body: make([]*Literal, n),
@@ -570,14 +578,15 @@ type waiter struct {
 // Example target: ancestor(X, Y)
 func (q query) search(target *Literal, waiters ...*waiter) *subgoal {
 	sg := q.newSubgoal(target, waiters)
-	pred, ok := target.Pred.(*DBPred)
+	pred, ok := target.Pred.(dbPred)
 	if !ok {
+		fmt.Println(reflect.TypeOf(target.Pred))
 		panic("datalog: primitives not yet implemented")
 	} else {
 		// Examine each fact or rule clause in the relevant database ...
 		// Example fact: ancestor(alice, bob)
 		// Example rule: ancestor(P, Q) :- parent(P, Q)
-		for _, clause := range pred.db {
+		for _, clause := range *pred.db() {
 			// ... and try to unify target with that clause's head.
 			renamed := clause.rename()
 			e := unify(target, renamed.Head)
@@ -653,8 +662,7 @@ func (q query) discoveredFact(factsg *subgoal, fact *Literal) {
 func resolve(rule *Clause, fact *Literal) *Clause {
 	n := len(rule.Body)
 	if n == 0 {
-		panic("not reached?")
-		return nil
+		panic("datalog: not reached -- rule can't have empty body")
 	}
 	// TODO(kwalsh) pretty sure fact has no variables, so renaming isn't needed.
 	e := unify(rule.Body[0], fact.rename())
