@@ -19,8 +19,6 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
-	"strconv"
-	"strings"
 	"fmt"
 )
 
@@ -75,7 +73,7 @@ type DistinctConst struct {
 }
 
 func (p * DistinctConst) cID() id {
-	return reflect.ValueOf(p).Pointer()
+	return id(reflect.ValueOf(p).Pointer())
 }
 
 // Var represents a datalog variable. These are typically written with initial
@@ -95,15 +93,15 @@ type DistinctVar struct {
 }
 
 func (p * DistinctVar) vID() id {
-	return reflect.ValueOf(p).Pointer()
+	return id(reflect.ValueOf(p).Pointer())
 }
 
 // Term represents an argument of a literal. Var and Const implement Term.
 type Term interface {
-	unify(other Term, env env) env
-	unifyVar(other Var, env env) env
-	unifyConst(other Const, env env) env
-	chase(env env) Term
+	unify(other Term, e env) env
+	unifyVar(other Var, e env) env
+	unifyConst(other Const, e env) env
+	chase(e env) Term
 }
 
 // Literal represents a predicate with terms for arguments. Typical examples
@@ -117,11 +115,26 @@ type Literal struct {
 
 // NewLiteral constructs a new literal from a predicate and arguments. The
 // number of arguments must match the predicate's arity, else nil is returned.
-func NewLiteral(p Pred, arg ...Term) *Literal, error {
+func NewLiteral(p Pred, arg ...Term) (*Literal, error) {
 	if p.arity() != len(arg) {
 		return nil, errors.New("datalog: arity mismatch")
 	}
 	return &Literal{Pred: p, Arg: arg}, nil
+}
+
+// String is a pretty-printer for literals. It produces traditional datalog
+// syntax, assuming that all the predicates and terms do when printed with %v.
+func (l *Literal) String() string {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "%v", l.Pred)
+	if len(l.Arg) > 0 {
+		fmt.Fprintf(&buf, "(%v", l.Arg[0])
+		for i := 1; i < len(l.Arg); i++ {
+			fmt.Fprintf(&buf, ", %v", l.Arg[i])
+		}
+		fmt.Fprintf(&buf, ")")
+	}
+	return buf.String()
 }
 
 // tag returns a "variant tag" for a literal, such that two literals have the
@@ -192,6 +205,21 @@ type Clause struct {
 	Body []*Literal
 }
 
+// String is a pretty-printer for clauses. It produces traditional datalog
+// syntax, assuming that all the predicates and terms do when printed with %v.
+func (c *Clause) String() string {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "%s", c.Head.String())
+	if len(c.Body) > 0 {
+		fmt.Fprintf(&buf, " :- %s", c.Body[0].String())
+		for i := 1; i < len(c.Body); i++ {
+			fmt.Fprintf(&buf, ", %s", c.Body[i].String())
+		}
+	}
+	return buf.String()
+}
+
+
 // Pred represents a logical predicate, or relation, of a given arity.
 type Pred interface {
 	// pID returns a distinct number for each live Pred.
@@ -206,11 +234,11 @@ type DistinctPred struct {
 }
 
 func (p * DistinctPred) pID() id {
-	return reflect.ValueOf(p).Pointer()
+	return id(reflect.ValueOf(p).Pointer())
 }
 
 func (p * DistinctPred) arity() int {
-	return p.A
+	return p.Arity
 }
 
 // DBPred holds a predicate that is defined by a database of facts and rules.
@@ -267,15 +295,31 @@ func (c *Clause) Retract() error {
 // Answers to a query are facts.
 type Answers []*Literal
 
+// String is a pretty-printer for Answers. It produces traditional datalog
+// syntax, assuming that all the predicates and terms do when printed with %v.
+func (a Answers) String() string {
+	if len(a) == 0 {
+		return "% empty"
+	} else if len(a) == 1 {
+		return a[0].String()
+	} else {
+		var buf bytes.Buffer
+		for _, fact := range a {
+			fmt.Fprintf(&buf, "%s\n", fact.String())
+		}
+		return buf.String()
+	}
+}
+
 // Query returns a list of facts that unify with the given literal.
 func (l *Literal) Query() Answers {
-	sg := make(query).search(l)
-	if len(sg.facts) == 0 {
+	facts := make(query).search(l).facts
+	if len(facts) == 0 {
 		return nil
 	}
-	a := make(Answers, len(sg.facts))
+	a := make(Answers, len(facts))
 	i := 0
-	for _, fact := range subgoal.facts {
+	for _, fact := range facts {
 		a[i] = fact
 		i++
 	}
@@ -307,15 +351,15 @@ func (c *Clause) RetractOne() error {
 type env map[Var]Term
 
 // subst creates a new literal by applying env.
-func (l *Literal) subst(env env) *Literal {
-	if env == nil || len(env) == 0 || len(l.Arg) == 0 {
+func (l *Literal) subst(e env) *Literal {
+	if e == nil || len(e) == 0 || len(l.Arg) == 0 {
 		return l
 	}
 	s := &Literal{Pred: l.Pred, Arg: make([]Term, len(l.Arg))}
 	copy(s.Arg, l.Arg)
 	for i, arg := range l.Arg {
 		if v, ok := arg.(Var); ok {
-			if t, ok := env[v]; ok {
+			if t, ok := e[v]; ok {
 				s.Arg[i] = t
 			}
 		}
@@ -326,18 +370,18 @@ func (l *Literal) subst(env env) *Literal {
 // shuffle extends env by adding, for each unmapped variable in the literal's
 // arguments, a mappings to a fresh variable. If env is nil, a new environment
 // is created.
-func (l *Literal) shuffle(env env) env {
-	if env == nil {
-		env = make(env)
+func (l *Literal) shuffle(e env) env {
+	if e == nil {
+		e = make(env)
 	}
 	for _, arg := range l.Arg {
-		if v, ok := arg.(*Variable); ok {
-			if _, ok := env[v]; !ok {
-				env[v] = &DistinctVar{}
+		if v, ok := arg.(Var); ok {
+			if _, ok := e[v]; !ok {
+				e[v] = &DistinctVar{}
 			}
 		}
 	}
-	return env
+	return e
 }
 
 // rename generates a new literal by renaming all variables to fresh ones.
@@ -346,50 +390,50 @@ func (l *Literal) rename() *Literal {
 }
 
 // chase applies env until a constant or an unmapped variable is reached.
-func (c *DistinctConst) chase(env env) Term {
+func (c *DistinctConst) chase(e env) Term {
 	return c
 }
 
 // chase applies env until a constant or an unmapped variable is reached.
-func (v *DistinctVar) chase(env env) Term {
-	if t, ok := env[v]; ok {
-		return t.chase(env)
+func (v *DistinctVar) chase(e env) Term {
+	if t, ok := e[v]; ok {
+		return t.chase(e)
 	} else {
 		return v
 	}
 }
 
 // unify const unknown reverses params.
-func (c *Const) unify(other Term, env env) env {
-	return other.unifyConst(c, env)
+func (c *DistinctConst) unify(other Term, e env) env {
+	return other.unifyConst(c, e)
 }
 
 // unify var unknown reverses params.
-func (v *Var) unify(other Term, env env) env {
-	return other.unifyVar(v, env)
+func (v *DistinctVar) unify(other Term, e env) env {
+	return other.unifyVar(v, e)
 }
 
 // unify const const fails.
-func (c *Const) unifyConst(c2 *Const, env env) env {
+func (c *DistinctConst) unifyConst(c2 Const, e env) env {
 	return nil
 }
 
 // unify const var maps var to const.
-func (c *Const) unifyVar(v *Var, env env) env {
-	env[v] = c
-	return env
+func (c *DistinctConst) unifyVar(v Var, e env) env {
+	e[v] = c
+	return e
 }
 
 // unify var const maps var to const.
-func (v *Var) unifyConst(c *Const, env env) env {
-	env[v] = c
-	return env
+func (v *DistinctVar) unifyConst(c Const, e env) env {
+	e[v] = c
+	return e
 }
 
 // unify var var maps var to var.
-func (v *Var) unifyVar(v2 *Var, env env) env {
-	env[v2] = v
-	return env
+func (v *DistinctVar) unifyVar(v2 Var, e env) env {
+	e[v2] = v
+	return e
 }
 
 // unify attempts to unify two literals. It returns an environment such that
@@ -399,43 +443,43 @@ func unify(a, b *Literal) env {
 	if a.Pred != b.Pred {
 		return nil
 	}
-	env := make(env)
+	e := make(env)
 	for i, _ := range a.Arg {
-		a_i := a.Arg[i].chase(env)
-		b_i := b.Arg[i].chase(env)
+		a_i := a.Arg[i].chase(e)
+		b_i := b.Arg[i].chase(e)
 		if a_i != b_i {
-			env = a_i.unify(b_i, env)
-			if env == nil {
+			e = a_i.unify(b_i, e)
+			if e == nil {
 				return nil
 			}
 		}
 	}
-	return env
+	return e
 }
 
 // drop creates a new clause by dropping d leading parts from the body, then
 // applying env to head and to each remaining body part.
-func (c *Clause) drop(d int, env env) *Clause {
+func (c *Clause) drop(d int, e env) *Clause {
 	n := len(c.Body) - d
 	if n < 0 {
 		panic("not reached?")
 	}
 	s := &Clause{
-		Head: c.Head.subst(env),
-		Body: make([]*Literal, n)
+		Head: c.Head.subst(e),
+		Body: make([]*Literal, n),
 	}
 	for i := 0; i < n; i++ {
-		s.Body[i] = c.Body[i+d].subst(env)
+		s.Body[i] = c.Body[i+d].subst(e)
 	}
 	return s
 }
 
 // subst creates a new clause by applying env to head and to each body part
-func (c *Clause) subst(env env) *Clause {
-	if env == nil || len(env) == 0 {
+func (c *Clause) subst(e env) *Clause {
+	if e == nil || len(e) == 0 {
 		return c
 	}
-	return c.drop(0, env)
+	return c.drop(0, e)
 }
 
 // rename generates a new clause by renaming all variables to freshly created
@@ -443,11 +487,11 @@ func (c *Clause) subst(env env) *Clause {
 func (c *Clause) rename() *Clause {
 	// Note: since all variables in head are also in body, we can ignore head
 	// while generating the environment.
-	var env env
-	for _, e := range c.Body {
-		env = e.shuffle(env)
+	var e env
+	for _, part := range c.Body {
+		e = part.shuffle(e)
 	}
-	return c.subst(env)
+	return c.subst(e)
 }
 
 // hasVar checks if v appears in a litteral.
@@ -464,7 +508,7 @@ func (l *Literal) hasVar(v Var) bool {
 // head also appears in the body.
 func (c *Clause) Safe() bool {
 	for _, arg := range c.Head.Arg {
-		if v, ok := arg.(*Variable); ok {
+		if v, ok := arg.(Var); ok {
 			safe := false
 			for _, literal := range c.Body {
 				if literal.hasVar(v) {
@@ -504,11 +548,12 @@ type factSet map[string]*Literal
 
 type subgoal struct {
 	target  *Literal  // e.g. ancestor(X, Y)
-	facts   factSet   // facts that unify with literal, e.g. ancestor(alice, bob)
-	waiters []*waiter // ?
+	facts   factSet   // facts that unify with target, e.g. ancestor(alice, bob)
+	waiters []*waiter // waiters such that target unifies with waiter.rule.body[0] 
 }
 
-// waiter is a pair containing a subgoal and a rule.
+// waiter is a (subgoal, rule) pair, where rule.head unifies with
+// subgoal.target.
 type waiter struct {
 	subgoal *subgoal
 	rule  *Clause
@@ -518,8 +563,8 @@ type waiter struct {
 // discovery of new facts that unify with target.
 // Example target: ancestor(X, Y)
 func (q query) search(target *Literal, waiters ...*waiter) *subgoal {
-	sg := newSubgoal(target, waiters)
-	pred, ok := target.Pred.(*predicate)
+	sg := q.newSubgoal(target, waiters)
+	pred, ok := target.Pred.(*DBPred)
 	if !ok {
 		panic("datalog: primitives not yet implemented")
 	} else {
@@ -529,14 +574,14 @@ func (q query) search(target *Literal, waiters ...*waiter) *subgoal {
 		for _, clause := range pred.db {
 			// ... and try to unify target with that clause's head.
 			renamed := clause.rename()
-			env := unify(target, renamed.Head)
-			if env != nil {
+			e := unify(target, renamed.Head)
+			if e != nil {
 				// Upon success, process the new discovery.
-				q.discovered(sg, renamed.subst(env))
+				q.discovered(sg, renamed.subst(e))
 			}
 		}
 	}
-	return subgoal
+	return sg
 }
 
 // discovered kicks off processing upon discovery of a fact or rule clause
@@ -571,7 +616,7 @@ func (q query) discoveredRule(rulesg *subgoal, rule *Clause) {
 			}
 		}
 		for _, r := range simplifiedRules {
-			q.discovered(sg, r)
+			q.discovered(rulesg, r)
 		}
 	}
 }
@@ -581,8 +626,8 @@ func (q query) discoveredRule(rulesg *subgoal, rule *Clause) {
 func (q query) discoveredFact(factsg *subgoal, fact *Literal) {
 	// TODO(kwalsh) pretty sure fact has no variables left (it would be unsafe if it
 	// did). So fact.ID() == fact.Tag().
-	if _, ok := factsg.facts[fact.ID()]; !ok {
-		factsg.facts[fact.ID()] = fact
+	if _, ok := factsg.facts[fact.lID()]; !ok {
+		factsg.facts[fact.lID()] = fact
 		// Rusume processing: For each deferred (rulesg, rule) pair, check if rule
 		// can be simplified using information from fact. If so then we have
 		// discovered a new, simpler rule whose head unifies with rulesg.target.
@@ -606,10 +651,10 @@ func resolve(rule *Clause, fact *Literal) *Clause {
 		return nil
 	}
 	// TODO(kwalsh) pretty sure fact has no variables, so renaming isn't needed.
-	env := unify(rule.Body[0], fact.rename())
-	if env == nil {
+	e := unify(rule.Body[0], fact.rename())
+	if e == nil {
 		return nil
 	}
-	return rule.drop(1, env)
+	return rule.drop(1, e)
 }
 
