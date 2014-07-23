@@ -36,7 +36,9 @@ type itemType int
 
 // Comments: '%' to end of line (but not in strings), ignored
 // Whitespace: ignored, except in strings
-// Punctuation: '(’, ',’, ')’, '=’, ':-’, '.’, '~’, '?’, and '"’
+// Punctuation: '(’, ',’, ')’, ':-’, '.’, '~’, '?’, and '"’
+// Note: We don't treat '=' specially or as punctuation, and we don't handle
+// infix operators.
 
 const (
 	itemError itemType = iota // error occurred; value is text of error
@@ -187,7 +189,7 @@ func lexVariable(l *lexer) stateFn {
 
 func lexIdentifier(l *lexer) stateFn {
 	// precondition: l.next() is printable, not banned punctuation, not [A-Z]
-	invalid := `?:=()~".,%`
+	invalid := `?:()~".,%` // '='
 	for {
 		r := l.next()
 		if r == eof || unicode.IsSpace(r) || strings.IndexRune(invalid, r) >= 0 || !unicode.IsPrint(r) {

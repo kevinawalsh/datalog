@@ -18,8 +18,8 @@ package datalog
 import (
 	"bytes"
 	"errors"
-	"reflect"
 	"fmt"
+	"reflect"
 )
 
 // Notes on uniqueness: The datalog engine must be able to tell when two
@@ -62,18 +62,26 @@ type id uintptr
 // This implementation doesn't place restrictions on the contents.
 type Const interface {
 	// cID returns a distinct number for each live Const.
-  cID() id
+	cID() id
 	Term
 }
 
 // DistinctConst can be embedded as an anonymous field in a struct T, enabling
-// *T to be used as a Const. 
+// *T to be used as a Const.
 type DistinctConst struct {
-	_ byte  // avoid confounding pointers due to zero size
+	_ byte // avoid confounding pointers due to zero size
 }
 
-func (p * DistinctConst) cID() id {
+func (p *DistinctConst) cID() id {
 	return id(reflect.ValueOf(p).Pointer())
+}
+
+func (p *DistinctConst) Constant() bool {
+	return true
+}
+
+func (p *DistinctConst) Variable() bool {
+	return false
 }
 
 // Var represents a datalog variable. These are typically written with initial
@@ -81,7 +89,7 @@ func (p * DistinctConst) cID() id {
 // even require variable names.
 type Var interface {
 	// vID returns a distinct number for each live Var.
-  vID() id
+	vID() id
 	Term
 }
 
@@ -89,11 +97,19 @@ type Var interface {
 // to be used as a Var. In addition, &DistinctVar{} can be used as a fresh Var
 // that has no name or associated data but is distinct from all other live Vars.
 type DistinctVar struct {
-	_ byte  // avoid confounding pointers due to zero size
+	_ byte // avoid confounding pointers due to zero size
 }
 
-func (p * DistinctVar) vID() id {
+func (p *DistinctVar) vID() id {
 	return id(reflect.ValueOf(p).Pointer())
+}
+
+func (p *DistinctVar) Constant() bool {
+	return false
+}
+
+func (p *DistinctVar) Variable() bool {
+	return true
 }
 
 // Term represents an argument of a literal. Var and Const implement Term.
@@ -101,22 +117,26 @@ type Term interface {
 	unify(other Term, e env) env
 	unifyVar(other Var, e env) env
 	unifyConst(other Const, e env) env
-	chase(e env) Term
+
+	// Constant checks whether this term is a Const.
+	Constant() bool
+
+	// Variable checks whether this term is a Var.
+	Variable() bool
 }
 
 // Literal represents a predicate with terms for arguments. Typical examples
 // include person(alice), ancestor(alice, bob), and ancestor(eve, X).
 type Literal struct {
-	Pred Pred
-	Arg []Term
-	cachedTag  *string
-	cachedID   *string // TODO(kwalsh) remove
+	Pred      Pred
+	Arg       []Term
+	cachedTag *string
 }
 
 // NewLiteral returns a new literal with the given predicate and arguments. The
 // number of arguments must match the predicate's arity, else panic ensues.
 func NewLiteral(p Pred, arg ...Term) *Literal {
-	if p.arity() != len(arg) {
+	if p.Arity() != len(arg) {
 		panic("datalog: arity mismatch")
 	}
 	return &Literal{Pred: p, Arg: arg}
@@ -181,21 +201,6 @@ func (l *Literal) tagf(buf *bytes.Buffer, varNum map[id]int) {
 	}
 }
 
-// lID returns an "identity tag" for a literal, such that two literals have the
-// same identity tag if and only if they are identical, including variables.
-// TODO(kwalsh) Used by subgoal.facts[] map.
-// TODO(kwalsh) eliminate this entirely:
-func (l *Literal) lID() string {
-	if l.cachedID != nil {
-		return *l.cachedID
-	}
-	var buf bytes.Buffer
-	l.tagf(&buf, nil)
-	id := buf.String()
-	l.cachedID = &id
-	return id
-}
-
 // Clause has a head literal and zero or more body literals. With an empty
 // body, it is known as a fact. Otherwise, a rule.
 // Example fact: parent(alice, bob)
@@ -225,55 +230,63 @@ func (c *Clause) String() string {
 	return buf.String()
 }
 
-
 // Pred represents a logical predicate, or relation, of a given arity.
 type Pred interface {
 	// pID returns a distinct number for each live Pred.
 	pID() id
-	arity() int
+	Arity() int
+	SetArity(arity int)
+
+	// Assert introduces to new information about a predicate. Assert is only
+	// called by the prover for Pred p if clause is safe and p == c.Head.Pred.
+	Assert(clause *Clause) error
+
+	// Retract removes information about a predicate. Retract is only called by
+	// the prover for Pred p if p == c.Head.Pred.
+	Retract(clause *Clause) error
+
+	// Search is called by the prover to discover information about a predicate.
+	// For each fact or rule whose head unifies with the target, Search should
+	// call the given callback.
+	Search(target *Literal, discovered func(c *Clause))
 }
 
 // DistinctPred can be embedded as an anonymous field in a struct T, enabling
-// *T to be used as a Pred. 
+// *T to be used as a Pred.
 type DistinctPred struct {
-	Arity int  // the arity of the predicate
+	arity int
 }
 
-func (p * DistinctPred) pID() id {
+func (p *DistinctPred) pID() id {
 	return id(reflect.ValueOf(p).Pointer())
 }
 
-func (p * DistinctPred) arity() int {
-	return p.Arity
+func (p *DistinctPred) Arity() int {
+	return p.arity
+}
+
+func (p *DistinctPred) SetArity(arity int) {
+	p.arity = arity
 }
 
 // DBPred holds a predicate that is defined by a database of facts and rules.
 type DBPred struct {
-	database []*Clause
+	db []*Clause
 	DistinctPred
 }
 
-// dbPred is trickery to allow dynamic testing for embedded DBPred
-// TODO(kwalsh) remove this hack when adding custom predicates
-type dbPred interface {
-	db() *[]*Clause
-}
-
-func (p *DBPred) db() *[]*Clause {
-	return &p.database
-}
-
-// Assert introduces a clause into the relevant database. The head predicate
-// must be a DBPred, otherwise an error is returned. The clause must be safe.
+// Assert checks if the clause is safe then calls Assert() on the appropriate
+// Pred.
 func (c *Clause) Assert() error {
 	if !c.Safe() {
 		return errors.New("datalog: can't assert unsafe clause")
 	}
-	p, ok := c.Head.Pred.(dbPred)
-	if !ok {
-		return errors.New("datalog: can't modify primitive predicate")
-	}
-	*p.db() = append(*p.db(), c)
+	return c.Head.Pred.Assert(c)
+}
+
+// Assert for a DBPred inserts c into the database for this predicate.
+func (p *DBPred) Assert(c *Clause) error {
+	p.db = append(p.db, c)
 	return nil
 }
 
@@ -289,44 +302,23 @@ func (c *Clause) tag() string {
 	return buf.String()
 }
 
-// Retract removes a clause from the relevant database, along with all
-// structurally identical clauses modulo variable renaming. The head predicate
-// must be a DBPred, otherwise an error is returned.
+// Retract calls Retract() on the appropriate Pred.
 func (c *Clause) Retract() error {
-	p, ok := c.Head.Pred.(dbPred)
-	if !ok {
-		return errors.New("datalog: can't modify primitive predicate")
-	}
+	return c.Head.Pred.Retract(c)
+}
+
+// Retract for a DBPred removes a clause from the relevant database, along with
+// all structurally identical clauses modulo variable renaming.
+func (p *DBPred) Retract(c *Clause) error {
 	tag := c.tag()
-	for i := 0; i < len(*p.db()); i++ {
-		if (*p.db())[i].tag() == tag {
-			n := len(*p.db())
-			(*p.db())[i], (*p.db())[n-1], *p.db() = (*p.db())[n-1], nil, (*p.db())[:n-1]
+	for i := 0; i < len(p.db); i++ {
+		if p.db[i].tag() == tag {
+			n := len(p.db)
+			p.db[i], p.db[n-1], p.db = p.db[n-1], nil, p.db[:n-1]
 			i--
 		}
 	}
 	return nil
-}
-
-// RetractOne removes one instance of a clause from the relevant database, or
-// one structurally identical clause modulo variable renaming. The head
-// predicate must be a DBPred, otherwise an error is returned. If no matching
-// clause is found, an error is returned.
-func (c *Clause) RetractOne() error {
-	p, ok := c.Head.Pred.(dbPred)
-	if !ok {
-		return errors.New("datalog: can't modify primitive predicate")
-	}
-	bodyLen := len(c.Body)  // check body len to avoid some tag calculations
-	tag := c.tag()
-	for i := 0; i < len(*p.db()); i++ {
-		if len((*p.db())[i].Body) == bodyLen && (*p.db())[i].tag() == tag {
-			n := len(*p.db())
-			(*p.db())[i], (*p.db())[n-1], *p.db() = (*p.db())[n-1], nil, (*p.db())[:n-1]
-			return nil
-		}
-	}
-	return errors.New("datalog: retract found no matching clauses")
 }
 
 // Answers to a query are facts.
@@ -406,13 +398,13 @@ func (l *Literal) rename() *Literal {
 }
 
 // chase applies env until a constant or an unmapped variable is reached.
-func (c *DistinctConst) chase(e env) Term {
-	return c
+func (c *DistinctConst) chase(c2 Term, e env) Term {
+	return c2
 }
 
 // chase applies env until a constant or an unmapped variable is reached.
-func (v *DistinctVar) chase(e env) Term {
-	if t, ok := e[v]; ok {
+func (v *DistinctVar) chase(v2 Term, e env) Term {
+	if t, ok := e[v2]; ok {
 		return t.chase(e)
 	} else {
 		return v
@@ -555,48 +547,47 @@ func (q query) findSubgoal(target *Literal) *subgoal {
 	return q[target.tag()]
 }
 
-// factSet tracks a set of literals, indexed by identity tag.
-// TODO(kwalsh) This map here and the fact() function below implement a quick way
-// to filter out identical literals by relying on Literal.ID().
+// factSet tracks a set of facts, indexed by tag.
 type factSet map[string]*Literal
 
 type subgoal struct {
 	target  *Literal  // e.g. ancestor(X, Y)
 	facts   factSet   // facts that unify with target, e.g. ancestor(alice, bob)
-	waiters []*waiter // waiters such that target unifies with waiter.rule.body[0] 
+	waiters []*waiter // waiters such that target unifies with waiter.rule.body[0]
 }
 
 // waiter is a (subgoal, rule) pair, where rule.head unifies with
 // subgoal.target.
 type waiter struct {
 	subgoal *subgoal
-	rule  *Clause
+	rule    *Clause
 }
 
 // search introduces a new subgoal for target, with waiters to be notified upon
 // discovery of new facts that unify with target.
 // Example target: ancestor(X, Y)
 func (q query) search(target *Literal, waiters ...*waiter) *subgoal {
+	fmt.Printf("search(%v, %v)\n", target, waiters)
 	sg := q.newSubgoal(target, waiters)
-	pred, ok := target.Pred.(dbPred)
-	if !ok {
-		fmt.Println(reflect.TypeOf(target.Pred))
-		panic("datalog: primitives not yet implemented")
-	} else {
-		// Examine each fact or rule clause in the relevant database ...
-		// Example fact: ancestor(alice, bob)
-		// Example rule: ancestor(P, Q) :- parent(P, Q)
-		for _, clause := range *pred.db() {
-			// ... and try to unify target with that clause's head.
-			renamed := clause.rename()
-			e := unify(target, renamed.Head)
-			if e != nil {
-				// Upon success, process the new discovery.
-				q.discovered(sg, renamed.subst(e))
-			}
+	target.Pred.Search(target, func(c *Clause) {
+		q.discovered(sg, c)
+	})
+	return sg
+}
+
+func (p *DBPred) Search(target *Literal, discovered func(c *Clause)) {
+	// Examine each fact or rule clause in the relevant database ...
+	// Example fact: ancestor(alice, bob)
+	// Example rule: ancestor(P, Q) :- parent(P, Q)
+	for _, clause := range p.db {
+		// ... and try to unify target with that clause's head.
+		renamed := clause.rename()
+		e := unify(target, renamed.Head)
+		if e != nil {
+			// Upon success, process the new discovery.
+			discovered(renamed.subst(e))
 		}
 	}
-	return sg
 }
 
 // discovered kicks off processing upon discovery of a fact or rule clause
@@ -639,10 +630,8 @@ func (q query) discoveredRule(rulesg *subgoal, rule *Clause) {
 // discoveredRule kicks off processing upon discovery of a fact that unifies
 // with a subgoal target.
 func (q query) discoveredFact(factsg *subgoal, fact *Literal) {
-	// TODO(kwalsh) pretty sure fact has no variables left (it would be unsafe if it
-	// did). So fact.ID() == fact.Tag().
-	if _, ok := factsg.facts[fact.lID()]; !ok {
-		factsg.facts[fact.lID()] = fact
+	if _, ok := factsg.facts[fact.tag()]; !ok {
+		factsg.facts[fact.tag()] = fact
 		// Rusume processing: For each deferred (rulesg, rule) pair, check if rule
 		// can be simplified using information from fact. If so then we have
 		// discovered a new, simpler rule whose head unifies with rulesg.target.
@@ -655,20 +644,20 @@ func (q query) discoveredFact(factsg *subgoal, fact *Literal) {
 	}
 }
 
-// resolve simplifies rule using information from fact. 
+// resolve simplifies rule using information from fact.
 // Example rule:    ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z)
 // Example fact:    ancestor(alice, bob)
 // Simplified rule: ancestor(alice, Z) :- ancestor(bob, Z)
 func resolve(rule *Clause, fact *Literal) *Clause {
-	n := len(rule.Body)
-	if n == 0 {
+	if len(rule.Body) == 0 {
 		panic("datalog: not reached -- rule can't have empty body")
 	}
-	// TODO(kwalsh) pretty sure fact has no variables, so renaming isn't needed.
-	e := unify(rule.Body[0], fact.rename())
+	if fact.rename() != fact {
+		panic("datalog: not reached -- fact should not have variables")
+	}
+	e := unify(rule.Body[0], fact)
 	if e == nil {
 		return nil
 	}
 	return rule.drop(1, e)
 }
-

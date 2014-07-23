@@ -66,7 +66,7 @@ func TestProver(t *testing.T) {
 
 	// ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z)
 	rule := NewClause(NewLiteral(ancestor, x, z),
-					          NewLiteral(ancestor, x, y), NewLiteral(ancestor, y, z))
+		NewLiteral(ancestor, x, y), NewLiteral(ancestor, y, z))
 	if err := rule.Assert(); err != nil {
 		t.Fatal(err.Error())
 	}
@@ -89,4 +89,3 @@ func TestProver(t *testing.T) {
 		t.Fatal("query got wrong number of answers")
 	}
 }
-

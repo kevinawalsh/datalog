@@ -52,8 +52,17 @@ func TestParser(t *testing.T) {
 	// fmt.Println(node)
 }
 
-func TestEngine(t *testing.T) {
+func setup(t *testing.T, input string, asserts, retracts, queries, errors int) *Engine {
 	e := NewEngine()
+	e.AddPred(Equals)
+	a, r, q, errs := e.Process("test", input)
+	if a != asserts || r != retracts || q != queries || errs != errors {
+		t.Fatalf("setup process failed: %d %d %d %d\ninput = %s", a, r, q, errs, input)
+	}
+	return e
+}
+
+func TestEngine(t *testing.T) {
 	input := `
 		ancestor(alice, bob).
 		ancestor(X, Y)?
@@ -65,10 +74,36 @@ func TestEngine(t *testing.T) {
 		ancestor(bob, carol)~
 		ancestor(alice, carol)?
 		`
-	a, r, q, errs := e.Process("test", input)
-	if a != 3 || r != 1 || q != 5 || errs != 0 {
-		t.Fatalf("Process failed: %d %d %d %d", a, r, q, errs)
+	setup(t, input, 3, 1, 5, 0)
+}
+
+func check(t *testing.T, e *Engine, query string, ans int) {
+	a, err := e.Query(query)
+	if err != nil {
+		t.Fatal(err.Error())
 	}
+	if len(a) != ans {
+		t.Fatalf("expected %d answers, got %d", ans, len(a))
+	}
+}
+
+func TestEquals(t *testing.T) {
+	e := setup(t, "z(X) :- =(X, 0).", 1, 0, 0, 0)
+	check(t, e, "z(0)?", 1)
+	check(t, e, "z(7)?", 0)
+	check(t, e, "z(X)?", 0)
+
+	e = setup(t, "z(X) :- =(X, 0). f(X, Y) :- z(X), =(X, Y).", 2, 0, 0, 0)
+	check(t, e, "f(X, Y)?", 1)
+
+	e = setup(t, "z(X) :- =(X, 0). f(X, Y) :- z(Y), =(X, Y).", 2, 0, 0, 0)
+	check(t, e, "f(X, Y)?", 1)
+
+	e = setup(t, "e(X, Y) :- =(X, Y).", 1, 0, 0, 0)
+	check(t, e, "e(X, Y)?", 0)
+
+	e = setup(t, "old(X) : person(X), age(X, Y), =(Y, 100). person(alice). age(alice, 102).", 3, 0, 0, 0)
+	check(t, e, "old(alice)?", 1)
 }
 
 type vertex []int
@@ -174,8 +209,10 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err.Error())
 		}
-		if a != qa[i] {
+		if (len(a) > 0) != qa[i] {
 			t.Fatalf("wrong on query %d: %s was %v, should be %v", i, query, a, qa[i])
+		} else {
+			fmt.Printf("ok\n")
 		}
 	}
 

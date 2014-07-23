@@ -95,7 +95,7 @@ func (p *Pred) String() string {
 func NewPred(name string, arity int) *Pred {
 	p := new(Pred)
 	p.Name = name
-	p.Arity = arity
+	p.SetArity(arity)
 	return p
 }
 
@@ -110,24 +110,34 @@ func NewRule(head *datalog.Literal, body ...*datalog.Literal) *datalog.Clause {
 // needed to ensure that objects that are no longer used are removed from the
 // Engine to be garbage collected.
 type Engine struct {
-	Term map[string]datalog.Term // live variables, constants, and identifiers
-	Pred map[string]datalog.Pred // live predicates 
+	Term     map[string]datalog.Term // live variables, constants, and identifiers
+	Pred     map[string]datalog.Pred // live predicates
 	refCount map[interface{}]int
 }
 
+// Construct a new engine.
 func NewEngine() *Engine {
 	return &Engine{
-		Term: make(map[string]datalog.Term),
-		Pred: make(map[string]datalog.Pred),
+		Term:     make(map[string]datalog.Term),
+		Pred:     make(map[string]datalog.Pred),
 		refCount: make(map[interface{}]int),
 	}
+}
+
+// Add the given predicate to the engine. This can be used to add custom
+// predicates like Equals to the engine. It can also be used to add the same
+// predicate to multiple engines (they will then share state for that
+// predicate). Any previous predicate with same name is replaced.
+func (e *Engine) AddPred(p datalog.Pred) {
+	id := fmt.Sprintf("%v", p) + "/" + strconv.Itoa(p.Arity())
+	e.Pred[id] = p
 }
 
 func (e *Engine) Process(name, input string) (assertions, retractions, queries, errors int) {
 	pgm, err := parse(name, input)
 	if err != nil {
 		errors++
-		fmt.Println("datalog: %s", err.Error())
+		fmt.Printf("datalog: %s", err.Error())
 		return
 	}
 	for _, node := range pgm.nodeList {
@@ -144,7 +154,7 @@ func (e *Engine) Process(name, input string) (assertions, retractions, queries, 
 			err = e.query(node.literal)
 			queries++
 		default:
-				panic("not reached")
+			panic("not reached")
 		}
 		if err != nil {
 			fmt.Printf("datalog: %s:%d: %s\n", name, node.Position(), err.Error())
@@ -174,7 +184,7 @@ func (e *Engine) Batch(name, input string) (assertions, retractions int, err err
 		case *queryNode:
 			// ignore
 		default:
-				panic("not reached")
+			panic("not reached")
 		}
 		if err != nil {
 			return
@@ -241,21 +251,20 @@ func (e *Engine) Retract(retraction string) error {
 	return e.retract(node.clause, false)
 }
 
-func (e *Engine) Query(query string) (bool, error) {
+func (e *Engine) Query(query string) (datalog.Answers, error) {
 	pgm, err := parse("query", query)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if len(pgm.nodeList) != 1 {
-		return false, fmt.Errorf("datalog: expecting one query: %s", query)
+		return nil, fmt.Errorf("datalog: expecting one query: %s", query)
 	}
 	node, ok := pgm.nodeList[0].(*queryNode)
 	if !ok {
-		return false, fmt.Errorf("datalog: expecting query: %s", query)
+		return nil, fmt.Errorf("datalog: expecting query: %s", query)
 	}
 	l := e.recoverLiteral(node.literal)
-	supported := l.Query() != nil
-	return supported, nil
+	return l.Query(), nil
 }
 
 func (e *Engine) recoverClause(clause *clauseNode) *datalog.Clause {
@@ -273,14 +282,17 @@ func (e *Engine) recoverLiteral(literal *literalNode) *datalog.Literal {
 	id := name + "/" + strconv.Itoa(arity)
 	p, ok := e.Pred[id]
 	if !ok {
+		fmt.Println("making new pred for ", id)
 		p = NewPred(name, arity)
 		e.Pred[id] = p
 	}
 	arg := make([]datalog.Term, arity)
 	for i, n := range literal.nodeList {
 		leaf := n.(*leafNode)
+		fmt.Printf("recovering new leaf term: %v\n", leaf)
 		t, ok := e.Term[leaf.val]
 		if !ok {
+			fmt.Printf("not found, making %v\n", n.Type())
 			switch n.Type() {
 			case nodeIdentifier:
 				t = NewIdent(leaf.val)
