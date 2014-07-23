@@ -18,50 +18,28 @@ import (
 	"testing"
 )
 
-func TestVarTags(t *testing.T) {
-	ancestor := new(DBPred)
-	ancestor.Arity = 2
-
-	x := new(DistinctVar)
-	y := new(DistinctVar)
-
-	l1 := NewLiteral(ancestor, x, y)
-	l2 := NewLiteral(ancestor, y, x)
-	l3 := NewLiteral(ancestor, y, x)
-
-	if l1.tag() != l2.tag() {
-		t.Fatal("tag mismatch")
-	}
-
-	if l1.lID() == l2.lID() {
-		t.Fatal("false tag match")
-	}
-
-	if l2.lID() != l3.lID() {
-		t.Fatal("tag mismatch")
-	}
-}
-
 func TestAllTags(t *testing.T) {
 	ancestor := new(DBPred)
 	ancestor.Arity = 2
 
 	alice := new(DistinctConst)
 	bob := new(DistinctConst)
+	carol := new(DistinctConst)
 
 	x := new(DistinctVar)
 	y := new(DistinctVar)
 
 	l1 := NewLiteral(ancestor, alice, bob)
 	l2 := NewLiteral(ancestor, alice, bob)
-	l3 := NewLiteral(ancestor, alice, x)
-	l4 := NewLiteral(ancestor, alice, y)
+	l3 := NewLiteral(ancestor, alice, carol)
+	l4 := NewLiteral(ancestor, alice, x)
+	l5 := NewLiteral(ancestor, alice, y)
 
-	if l1.tag() != l2.tag() || l3.tag() != l4.tag() {
+	if l1.tag() != l2.tag() || l4.tag() != l5.tag() {
 		t.Fatal("tag mismatch")
 	}
 
-	if l1.tag() == l3.tag() {
+	if l1.tag() == l4.tag() || l1.tag() == l3.tag() {
 		t.Fatal("false tag match")
 	}
 
@@ -69,7 +47,7 @@ func TestAllTags(t *testing.T) {
 		t.Fatal("id mismatch")
 	}
 
-	if l1.lID() == l3.lID() || l3.lID() == l4.lID() {
+	if l1.lID() == l3.lID() {
 		t.Fatal("false id match")
 	}
 }
