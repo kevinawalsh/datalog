@@ -16,8 +16,6 @@ package dlengine
 
 import (
 	"errors"
-	"fmt"
-	"reflect"
 
 	"datalog"
 )
@@ -55,9 +53,6 @@ func (eq *eqPrim) Retract(c *datalog.Clause) error {
 func (eq *eqPrim) Search(target *datalog.Literal, discovered func(c *datalog.Clause)) {
 	a := target.Arg[0]
 	b := target.Arg[1]
-	fmt.Println("searching eq")
-	fmt.Println(a, " a type: ", reflect.TypeOf(a))
-	fmt.Println(b, " b type: ", reflect.TypeOf(b))
 	if a.Variable() && b.Constant() {
 		discovered(datalog.NewClause(datalog.NewLiteral(eq, b, b)))
 	} else if a.Constant() && b.Variable() {

@@ -114,14 +114,10 @@ func (p *DistinctVar) Variable() bool {
 
 // Term represents an argument of a literal. Var and Const implement Term.
 type Term interface {
-	unify(other Term, e env) env
-	unifyVar(other Var, e env) env
-	unifyConst(other Const, e env) env
-
-	// Constant checks whether this term is a Const.
+	// Constant checks whether this term is a Const. Same as _, ok := t.(Const).
 	Constant() bool
 
-	// Variable checks whether this term is a Var.
+	// Variable checks whether this term is a Var. Same as _, ok := t.(Var).
 	Variable() bool
 }
 
@@ -397,44 +393,37 @@ func (l *Literal) rename() *Literal {
 	return l.subst(l.shuffle(nil))
 }
 
-// chase applies env until a constant or an unmapped variable is reached.
-func (c *DistinctConst) chase(c2 Term, e env) Term {
-	return c2
-}
-
-// chase applies env until a constant or an unmapped variable is reached.
-func (v *DistinctVar) chase(v2 Term, e env) Term {
-	if t, ok := e[v2]; ok {
-		return t.chase(e)
-	} else {
-		return v
+// chase applies env to a term until a constant or an unmapped variable is reached.
+func chase(t Term, e env) Term {
+	for v, ok := t.(Var); ok; {
+		next, ok := e[v]
+		if !ok {
+			break
+		}
+		t = next
 	}
+	return t
 }
 
-// unify const unknown reverses params.
-func (c *DistinctConst) unify(other Term, e env) env {
-	return other.unifyConst(c, e)
-}
-
-// unify var unknown reverses params.
-func (v *DistinctVar) unify(other Term, e env) env {
-	return other.unifyVar(v, e)
-}
-
-// unify const const fails.
-func (c *DistinctConst) unifyConst(c2 Const, e env) env {
-	return nil
-}
-
-// unify const var maps var to const.
-func (c *DistinctConst) unifyVar(v Var, e env) env {
-	e[v] = c
-	return e
-}
-
-// unify var const maps var to const.
-func (v *DistinctVar) unifyConst(c Const, e env) env {
-	e[v] = c
+// unify two terms, where a != b
+func unifyTerms(a, b Term, e env) env {
+	if va, ok := a.(Var); ok {
+		if vb, ok := b.(Var); ok  {
+			// unify var var
+			e[va] = vb
+		} else {
+			// unify var const
+			e[va] = b
+		}
+	} else {
+		if vb, ok := b.(Var); ok  {
+			// unify const var
+			e[vb] = a
+		} else {
+			// unify const const
+			return nil
+		}
+	}
 	return e
 }
 
@@ -453,10 +442,10 @@ func unify(a, b *Literal) env {
 	}
 	e := make(env)
 	for i, _ := range a.Arg {
-		a_i := a.Arg[i].chase(e)
-		b_i := b.Arg[i].chase(e)
+		a_i := chase(a.Arg[i], e)
+		b_i := chase(b.Arg[i], e)
 		if a_i != b_i {
-			e = a_i.unify(b_i, e)
+			e = unifyTerms(a_i, b_i, e)
 			if e == nil {
 				return nil
 			}
@@ -567,7 +556,6 @@ type waiter struct {
 // discovery of new facts that unify with target.
 // Example target: ancestor(X, Y)
 func (q query) search(target *Literal, waiters ...*waiter) *subgoal {
-	fmt.Printf("search(%v, %v)\n", target, waiters)
 	sg := q.newSubgoal(target, waiters)
 	target.Pred.Search(target, func(c *Clause) {
 		q.discovered(sg, c)

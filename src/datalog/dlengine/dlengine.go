@@ -282,17 +282,14 @@ func (e *Engine) recoverLiteral(literal *literalNode) *datalog.Literal {
 	id := name + "/" + strconv.Itoa(arity)
 	p, ok := e.Pred[id]
 	if !ok {
-		fmt.Println("making new pred for ", id)
 		p = NewPred(name, arity)
 		e.Pred[id] = p
 	}
 	arg := make([]datalog.Term, arity)
 	for i, n := range literal.nodeList {
 		leaf := n.(*leafNode)
-		fmt.Printf("recovering new leaf term: %v\n", leaf)
 		t, ok := e.Term[leaf.val]
 		if !ok {
-			fmt.Printf("not found, making %v\n", n.Type())
 			switch n.Type() {
 			case nodeIdentifier:
 				t = NewIdent(leaf.val)
