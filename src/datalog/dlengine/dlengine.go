@@ -15,8 +15,8 @@
 // This code borrows heavily from the lexer design and implementation for the
 // template package. See http://golang.org/src/pkg/text/template/parse/parse.go
 
-// Engine for a text-based Datalog interpreter. Also provides pretty-printing
-// for datalog literals, predicates, etc.
+// Package dlengine provides a text-based Datalog interpreter. This package also
+// provides pretty-printing for datalog literals, predicates, etc.
 package dlengine
 
 import (
