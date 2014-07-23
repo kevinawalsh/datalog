@@ -179,20 +179,15 @@ func (l *Literal) tagf(buf *bytes.Buffer, varNum map[id]int) {
 		case Const:
 			fmt.Fprintf(buf, ",%x", arg.cID())
 		case Var:
-			if varNum == nil {
-				fmt.Fprintf(buf, ",%x", arg.vID())
-				panic("datalog: doesn't happen?")
-			} else {
-				vid := arg.vID()
-				num, ok := varNum[vid]
-				if !ok {
-					num = len(varNum)
-					varNum[vid] = num
-				}
-				fmt.Fprintf(buf, ",v%d", num)
+			vid := arg.vID()
+			num, ok := varNum[vid]
+			if !ok {
+				num = len(varNum)
+				varNum[vid] = num
 			}
+			fmt.Fprintf(buf, ",v%d", num)
 		default:
-			panic("not reached")
+			panic("datalog: not reached -- term is always Var or Const")
 		}
 	}
 }
@@ -408,7 +403,7 @@ func chase(t Term, e env) Term {
 // unify two terms, where a != b
 func unifyTerms(a, b Term, e env) env {
 	if va, ok := a.(Var); ok {
-		if vb, ok := b.(Var); ok  {
+		if vb, ok := b.(Var); ok {
 			// unify var var
 			e[va] = vb
 		} else {
@@ -416,7 +411,7 @@ func unifyTerms(a, b Term, e env) env {
 			e[va] = b
 		}
 	} else {
-		if vb, ok := b.(Var); ok  {
+		if vb, ok := b.(Var); ok {
 			// unify const var
 			e[vb] = a
 		} else {

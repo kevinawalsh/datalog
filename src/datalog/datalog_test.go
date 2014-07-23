@@ -20,7 +20,7 @@ import (
 
 func TestAllTags(t *testing.T) {
 	ancestor := new(DBPred)
-	ancestor.Arity = 2
+	ancestor.SetArity(2)
 
 	alice := new(DistinctConst)
 	bob := new(DistinctConst)
@@ -42,19 +42,11 @@ func TestAllTags(t *testing.T) {
 	if l1.tag() == l4.tag() || l1.tag() == l3.tag() {
 		t.Fatal("false tag match")
 	}
-
-	if l1.lID() != l2.lID() {
-		t.Fatal("id mismatch")
-	}
-
-	if l1.lID() == l3.lID() {
-		t.Fatal("false id match")
-	}
 }
 
 func TestProver(t *testing.T) {
 	ancestor := new(DBPred)
-	ancestor.Arity = 2
+	ancestor.SetArity(2)
 
 	alice := new(DistinctConst)
 	bob := new(DistinctConst)
