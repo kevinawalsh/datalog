@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"os"
 	"testing"
+	"reflect"
 )
 
 func TestTypes(t *testing.T) {
@@ -80,6 +81,36 @@ func TestTypes(t *testing.T) {
 	if a == nil {
 		t.Fatal("query failed")
 	}
+}
+
+func TestTags(t *testing.T) {
+	ancestor := NewPredicate("ancestor", 2)
+
+	x := &Variable{"X"}
+	y := &Variable{"Y"}
+
+	l1 := NewLiteral(ancestor, x, y)
+	l2 := NewLiteral(ancestor, y, x)
+	l3 := NewLiteral(ancestor, y, x)
+
+	if l1.Tag() != l2.Tag() {
+		t.Fatal("tag mismatch")
+	}
+
+	if l1.ID() == l2.ID() {
+		t.Fatal("false tag match")
+	}
+
+	if l2.ID() != l3.ID() {
+		t.Fatal("tag mismatch")
+	}
+
+	//fmt.Println(*l1 == *l2)
+	//fmt.Println(*l1 == *l3)
+	//fmt.Println(*l2 == *l3)
+	fmt.Printf("%p\n", l1)
+	fmt.Printf("%v\n", reflect.ValueOf(l1))
+	fmt.Printf("0x%x\n", reflect.ValueOf(l1).Pointer())
 }
 
 func TestLexer(t *testing.T) {

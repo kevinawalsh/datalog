@@ -22,7 +22,93 @@ package datalog
 import (
 	"fmt"
 	"strconv"
+	"bytes"
+	"fmt"
 )
+
+// NamedVar represents a variable with a name. 
+type NamedVar struct {
+	Name string
+	Distinct
+}
+
+func (v *NamedVar) String() {
+	return v.Name
+}
+
+// StringConst represents a quoted string.
+type StringConst struct {
+	Value string
+	Distinct
+}
+
+func (c *StringConst) String() string {
+	return strconv.Quote(c.Value)
+}
+
+// BareConst represents a bare identifier.
+type BareConst struct {
+	Value string
+	Distinct
+}
+
+func (c *BareConst) String() string {
+	return c.Value
+}
+
+// String is a pretty-printer for literals.
+func (l *Literal) String() string {
+	var buf bytes.Buffer
+	fmt.Fprintf(buf, "%v", l.Pred)
+	if len(l.Arg) > 0 {
+		for i, arg := range l.Arg {
+			if i == 0 {
+				fmt.Fprintf(buf, "(%v", arg)
+			} else {
+				fmt.Fprintf(buf, ", %v", arg)
+			}
+		}
+		fmt.Fprintf(buf, ")")
+	}
+	return buf.String()
+}
+
+// String is a pretty-printer for clauses.
+func (c *Clause) String() string {
+	if len(c.Body) == 0 {
+		return c.Head.String()
+	} else {
+		var bodies []string
+		for _, l := range c.Body {
+			bodies = append(bodies, l.String())
+		}
+		return c.Head.String() + " :- " + strings.Join(bodies, ", ")
+	}
+}
+
+func NewClause(head *Literal, body ...*Literal) *Clause {
+	return &Clause{Head: head, Body: body}
+}
+
+// Named predicate
+
+todo
+
+func (p *predicate) String() string {
+	return PredicateID(p)
+}
+
+func (a *Answers) String() string {
+	if len(a.Terms) == 0 {
+		return "<empty>"
+	}
+	var facts []string
+	for _, terms := range a.Terms {
+		facts = append(facts, NewFact(a.P, terms...).String())
+	}
+	return strings.Join(facts, "\n")
+}
+
 
 type Engine struct {
 	Term map[string]Term // variables, constants, and identifiers
