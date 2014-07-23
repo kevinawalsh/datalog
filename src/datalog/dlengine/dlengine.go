@@ -22,7 +22,6 @@ package dlengine
 import (
 	"fmt"
 	"strconv"
-	"bytes"
 
 	"datalog"
 )
@@ -34,7 +33,14 @@ type Var struct {
 	datalog.DistinctVar
 }
 
-func (v *NamedVar) String() {
+// NewVar returns a Var with the given name.
+func NewVar(name string) *Var {
+	v := new(Var)
+	v.Name = name
+	return v
+}
+
+func (v *Var) String() string {
 	return v.Name
 }
 
@@ -48,6 +54,13 @@ func (q *Quoted) String() string {
 	return strconv.Quote(q.Value)
 }
 
+// NewQuoted returns a Quoted with the given value.
+func NewQuoted(value string) *Quoted {
+	q := new(Quoted)
+	q.Value = value
+	return q
+}
+
 // Ident represents a bare identifier constant, e.g. alice, -42. Value should
 // start with non-uppercase and follow traditional datalog syntax.
 type Ident struct {
@@ -59,6 +72,13 @@ func (i *Ident) String() string {
 	return i.Value
 }
 
+// NewIdent returns an Ident with the given value.
+func NewIdent(value string) *Ident {
+	i := new(Ident)
+	i.Value = value
+	return i
+}
+
 // Pred represents a database-defined predicate with a name and arity, e.g.
 // ancestor/2. Name should start with non-uppercase and follow traditional
 // datalog syntax.
@@ -67,13 +87,21 @@ type Pred struct {
 	datalog.DBPred
 }
 
-type (p *Pred) String() string {
+func (p *Pred) String() string {
 	return p.Name
 }
 
+// NewPred returns a Pred with the given name and arity.
+func NewPred(name string, arity int) *Pred {
+	p := new(Pred)
+	p.Name = name
+	p.Arity = arity
+	return p
+}
+
 // NewRule returns a new clause with the given head and body literals.
-func NewRule(head *Literal, body ...*Literal) *Clause {
-	return &Clause{Head: head, Body: body}
+func NewRule(head *datalog.Literal, body ...*datalog.Literal) *datalog.Clause {
+	return &datalog.Clause{Head: head, Body: body}
 }
 
 // Engine maintains state for the datalog prover. The main task of the engine is
@@ -82,15 +110,15 @@ func NewRule(head *Literal, body ...*Literal) *Clause {
 // needed to ensure that objects that are no longer used are removed from the
 // Engine to be garbage collected.
 type Engine struct {
-	Term map[string]Term // live variables, constants, and identifiers
-	Predicate map[string]Predicate // live predicates 
+	Term map[string]datalog.Term // live variables, constants, and identifiers
+	Pred map[string]datalog.Pred // live predicates 
 	refCount map[interface{}]int
 }
 
 func NewEngine() *Engine {
 	return &Engine{
-		Term: make(map[string]Term),
-		Predicate: make(map[string]Predicate),
+		Term: make(map[string]datalog.Term),
+		Pred: make(map[string]datalog.Pred),
 		refCount: make(map[interface{}]int),
 	}
 }
@@ -230,36 +258,36 @@ func (e *Engine) Query(query string) (bool, error) {
 	return supported, nil
 }
 
-func (e *Engine) recoverClause(clause *clauseNode) *Clause {
+func (e *Engine) recoverClause(clause *clauseNode) *datalog.Clause {
 	head := e.recoverLiteral(clause.head)
-	body := make([]*Literal, len(clause.nodeList))
+	body := make([]*datalog.Literal, len(clause.nodeList))
 	for i, node := range clause.nodeList {
 		body[i] = e.recoverLiteral(node.(*literalNode))
 	}
 	return NewRule(head, body...)
 }
 
-func (e *Engine) recoverLiteral(literal *literalNode) *Literal {
+func (e *Engine) recoverLiteral(literal *literalNode) *datalog.Literal {
 	name := literal.predsym
 	arity := len(literal.nodeList)
 	id := name + "/" + strconv.Itoa(arity)
-	p, ok := e.Predicate[id]
+	p, ok := e.Pred[id]
 	if !ok {
-		p = NewPredicate(name, arity)
-		e.Predicate[id] = p
+		p = NewPred(name, arity)
+		e.Pred[id] = p
 	}
-	arg := make([]Term, arity)
+	arg := make([]datalog.Term, arity)
 	for i, n := range literal.nodeList {
 		leaf := n.(*leafNode)
 		t, ok := e.Term[leaf.val]
 		if !ok {
 			switch n.Type() {
 			case nodeIdentifier:
-				t = &Constant{leaf.val}
+				t = NewIdent(leaf.val)
 			case nodeString:
-				t = &Constant{leaf.val}
+				t = NewQuoted(leaf.val)
 			case nodeVariable:
-				t = &Variable{leaf.val}
+				t = NewVar(leaf.val)
 			default:
 				panic("not reached")
 			}
@@ -267,17 +295,18 @@ func (e *Engine) recoverLiteral(literal *literalNode) *Literal {
 		}
 		arg[i] = t
 	}
-	return NewLiteral(p, arg...)
+	l, _ := datalog.NewLiteral(p, arg...)
+	return l
 }
 
-func (e *Engine) track(c *Clause, inc int) {
+func (e *Engine) track(c *datalog.Clause, inc int) {
 	e.trackLiteral(c.Head, inc)
 	for _, l := range c.Body {
 		e.trackLiteral(l, inc)
 	}
 }
 
-func (e *Engine) trackLiteral(l *Literal, inc int) {
+func (e *Engine) trackLiteral(l *datalog.Literal, inc int) {
 	e.trackObject(l.Pred, inc)
 	for _, t := range l.Arg {
 		e.trackObject(t, inc)

@@ -113,13 +113,13 @@ type Literal struct {
 	cachedID   *string // TODO(kwalsh) remove
 }
 
-// NewLiteral constructs a new literal from a predicate and arguments. The
-// number of arguments must match the predicate's arity, else nil is returned.
-func NewLiteral(p Pred, arg ...Term) (*Literal, error) {
+// NewLiteral returns a new literal with the given predicate and arguments. The
+// number of arguments must match the predicate's arity, else panic ensues.
+func NewLiteral(p Pred, arg ...Term) *Literal {
 	if p.arity() != len(arg) {
-		return nil, errors.New("datalog: arity mismatch")
+		panic("datalog: arity mismatch")
 	}
-	return &Literal{Pred: p, Arg: arg}, nil
+	return &Literal{Pred: p, Arg: arg}
 }
 
 // String is a pretty-printer for literals. It produces traditional datalog
@@ -203,6 +203,12 @@ func (l *Literal) lID() string {
 type Clause struct {
 	Head *Literal
 	Body []*Literal
+}
+
+// NewClause constructs a new fact (if there are no arguments) or rule
+// (otherwise).
+func NewClause(head *Literal, body ...*Literal) *Clause {
+	return &Clause{Head: head, Body: body}
 }
 
 // String is a pretty-printer for clauses. It produces traditional datalog
