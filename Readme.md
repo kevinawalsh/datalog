@@ -24,5 +24,5 @@ See the sources, or view the documentation here:
 
 * [datalog](http://godoc.org/github.com/kevinawalsh/datalog)
 * [datalog/dlengine](http://godoc.org/github.com/kevinawalsh/datalog/dlengine)
-* [datalog/dlprin](http://godoc.org/github.com/kevinawalsh/datalog/dlprin)
+* [datalog/dlprim](http://godoc.org/github.com/kevinawalsh/datalog/dlprim)
 
