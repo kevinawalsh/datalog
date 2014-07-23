@@ -15,11 +15,14 @@ Setup
 
 After installing a suitable version of Go, run:
 
-> go get github.org/kevinawalsh/datalog
-> go get github.org/kevinawalsh/datalog/dlengine
-> go get github.org/kevinawalsh/datalog/dlprin
+`go get github.com/kevinawalsh/datalog`
 
 Documentation
 -------------
 
-See the sources.
+See the sources, or view the documentation here:
+
+* [datalog](http://godoc.org/github.com/kevinawalsh/datalog)
+* [datalog/dlengine](http://godoc.org/github.com/kevinawalsh/datalog/dlengine)
+* [datalog/dlprin](http://godoc.org/github.com/kevinawalsh/datalog/dlprin)
+
