@@ -32,9 +32,8 @@ func TestLexer(t *testing.T) {
 		"ancestor(X, Y)?\n")
 	for {
 		item := l.nextToken()
-		// fmt.Println(item)
 		if item.typ == itemError {
-			t.Fatal("lex error: %v", item)
+			t.Fatalf("lex error: %v", item)
 		}
 		if item.typ == itemEOF {
 			break
@@ -52,7 +51,6 @@ func TestParser(t *testing.T) {
 	if node == nil {
 		t.Fatal("missing parse node")
 	}
-	// fmt.Println(node)
 }
 
 func setup(t *testing.T, input string, asserts, retracts, queries, errors int) *Engine {
@@ -118,21 +116,23 @@ func path(g *graph, src, dst int) bool {
 	return false
 }
 
-func TestPath(t *testing.T) {
-	// rng := rand.New(rand.NewSource(1))
-
+func BenchmarkDatalogPathFinding(b *testing.B) {
+	// We store
 	filename := "test.dl"
 
 	n := 100
 	e := 200
+	t := 5 * b.N // run 5 queries per benchmark to get a mix of pos/neg results
 	f, err := os.Create(filename)
 	if err != nil {
-		t.Fatal(err.Error())
+		b.Fatal(err.Error())
 	}
 	out := bufio.NewWriter(f)
-	fmt.Fprintf(out, "%% datalog path-finding test\n")
+	fmt.Fprintf(out, "%% datalog path-finding benchmark\n")
 	fmt.Fprintf(out, "%% n = %d vertices\n", n)
 	fmt.Fprintf(out, "%% e = %d directed edges\n", e)
+	fmt.Fprintf(out, "%% t = %d trials\n", t)
+
 	fmt.Fprintf(out, "path(X, Y) :- edge(X, Y).\n")
 	fmt.Fprintf(out, "path(X, Z) :- path(X, Y), path(Y, Z).\n")
 
@@ -143,48 +143,51 @@ func TestPath(t *testing.T) {
 		fmt.Fprintf(out, "edge(v-%d, v-%d).\n", x, y)
 		g.v[x] = append(g.v[x], y)
 	}
+
+	queries := make([]string, t)
+	answers := make([]int, t)
+
+	for i := 0; i < t; i++ {
+		x := rand.Intn(n)
+		y := rand.Intn(n)
+		queries[i] = fmt.Sprintf("path(v-%d, v-%d)?", x, y)
+		if path(g, x, y) {
+			fmt.Fprintf(out, "%% The following query should produce one response.\n")
+			answers[i] = 1
+		} else {
+			fmt.Fprintf(out, "%% The following query should produce no responses.\n")
+			answers[i] = 0
+		}
+		fmt.Fprintf(out, "%s\n", queries[i])
+	}
+
 	out.Flush()
 	f.Close()
 
+	// end of setup
+	b.ResetTimer()
+
 	input, err := ioutil.ReadFile(filename)
 	if err != nil {
-		t.Fatal(err.Error())
+		b.Fatal(err.Error())
 	}
-
-	trials := 5
-	qx := make([]int, trials)
-	qy := make([]int, trials)
-	qa := make([]bool, trials)
-
-	fmt.Printf("generating %d trials\n", trials)
-	pos := 0
-	for i := 0; i < trials; i++ {
-		qx[i] = rand.Intn(n)
-		qy[i] = rand.Intn(n)
-		qa[i] = path(g, qx[i], qy[i])
-		if qa[i] {
-			pos++
-		}
-	}
-	fmt.Printf("%d positive trials, %d negative trials\n", pos, trials-pos)
 
 	fmt.Printf("loading database\n")
 	engine := NewEngine()
 	a, r, err := engine.Batch(filename, string(input))
 	if err != nil {
-		t.Fatal(err.Error())
+		b.Fatal(err.Error())
 	}
 	fmt.Printf("loaded %d assertions, %d retractions\n", a, r)
-	fmt.Printf("querying database for %d trials\n", trials)
-	for i := 0; i < trials; i++ {
-		query := fmt.Sprintf("path(v-%d, v-%d)?", qx[i], qy[i])
-		fmt.Printf("query %s should be %v\n", query, qa[i])
-		a, err := engine.Query(query)
+	fmt.Printf("querying database %d times\n", t)
+	for i := 0; i < t; i++ {
+		fmt.Printf("query %s should produce %v responses\n", queries[i], answers[i])
+		a, err := engine.Query(queries[i])
 		if err != nil {
-			t.Fatal(err.Error())
+			b.Fatal(err.Error())
 		}
-		if (len(a) > 0) != qa[i] {
-			t.Fatalf("wrong on query %d: %s was %v, should be %v", i, query, a, qa[i])
+		if len(a) != answers[i] {
+			b.Fatalf("failed on trial %d: expecting %d answers, got %d answers\n", i, answers[i], len(a))
 		} else {
 			fmt.Printf("ok\n")
 		}

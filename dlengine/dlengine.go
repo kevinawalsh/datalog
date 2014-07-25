@@ -38,9 +38,7 @@ type Var struct {
 
 // NewVar returns a Var with the given name.
 func NewVar(name string) *Var {
-	v := new(Var)
-	v.Name = name
-	return v
+	return &Var{Name: name}
 }
 
 func (v *Var) String() string {
@@ -59,9 +57,7 @@ func (q *Quoted) String() string {
 
 // NewQuoted returns a Quoted with the given value.
 func NewQuoted(value string) *Quoted {
-	q := new(Quoted)
-	q.Value = value
-	return q
+	return &Quoted{Value: value}
 }
 
 // Ident represents a bare identifier constant, e.g. alice, -42. Value should
@@ -77,9 +73,7 @@ func (i *Ident) String() string {
 
 // NewIdent returns an Ident with the given value.
 func NewIdent(value string) *Ident {
-	i := new(Ident)
-	i.Value = value
-	return i
+	return &Ident{Value: value}
 }
 
 // Pred represents a database-defined predicate with a name and arity, e.g.
@@ -96,8 +90,7 @@ func (p *Pred) String() string {
 
 // NewPred returns a Pred with the given name and arity.
 func NewPred(name string, arity int) *Pred {
-	p := new(Pred)
-	p.Name = name
+	p := &Pred{Name: name}
 	p.SetArity(arity)
 	return p
 }
@@ -115,10 +108,10 @@ func NewRule(head *datalog.Literal, body ...*datalog.Literal) *datalog.Clause {
 type Engine struct {
 	Term     map[string]datalog.Term // live variables, constants, and identifiers
 	Pred     map[string]datalog.Pred // live predicates
-	refCount map[interface{}]int
+	refCount map[interface{}]int     // all refcounted objects
 }
 
-// Construct a new engine.
+// NewEngine constructs a new engine.
 func NewEngine() *Engine {
 	return &Engine{
 		Term:     make(map[string]datalog.Term),
@@ -127,15 +120,20 @@ func NewEngine() *Engine {
 	}
 }
 
-// Add the given predicate to the engine. This can be used to add custom
-// predicates like Equals to the engine. It can also be used to add the same
-// predicate to multiple engines (they will then share state for that
+// AddPred add the given predicate to the engine. This can be used to add custom
+// predicates like dlprim.Equals to the engine. It can also be used to add the
+// same predicate to multiple engines (they will then share state for that
 // predicate). Any previous predicate with same name is replaced.
 func (e *Engine) AddPred(p datalog.Pred) {
 	id := fmt.Sprintf("%v", p) + "/" + strconv.Itoa(p.Arity())
 	e.Pred[id] = p
 }
 
+// Process parses and executes the input string, returning the number of
+// assertions, retractions, queries, and errors that were seen. This function
+// prints a log of operations to stdout. When errors are printed, a message is
+// printed to stdout, with name is shown as the name of the input source, then
+// processing continues if possible.
 func (e *Engine) Process(name, input string) (assertions, retractions, queries, errors int) {
 	pgm, err := parse(name, input)
 	if err != nil {
@@ -169,6 +167,10 @@ func (e *Engine) Process(name, input string) (assertions, retractions, queries, 
 	return
 }
 
+// Batch parses and executes the input string, returning the number of
+// assertions and retractions processed. Only assertions and retractions are
+// processed. Queries are ignored. Nothing is printed to stdout, and execution
+// stops if any error is encountered.
 func (e *Engine) Batch(name, input string) (assertions, retractions int, err error) {
 	pgm, err := parse(name, input)
 	if err != nil {
@@ -224,6 +226,8 @@ func (e *Engine) query(literal *literalNode) error {
 	return nil
 }
 
+// Assert parses the given string and adds the resulting assertion to the
+// database.
 func (e *Engine) Assert(assertion string) error {
 	pgm, err := parse("assert", assertion)
 	if err != nil {
@@ -239,6 +243,8 @@ func (e *Engine) Assert(assertion string) error {
 	return e.assert(node.clause, false)
 }
 
+// Retract parses the given string and removes the resulting assertion from the
+// database.
 func (e *Engine) Retract(retraction string) error {
 	pgm, err := parse("retract", retraction)
 	if err != nil {
@@ -254,6 +260,7 @@ func (e *Engine) Retract(retraction string) error {
 	return e.retract(node.clause, false)
 }
 
+// Query parses the given string and executes the resulting query.
 func (e *Engine) Query(query string) (datalog.Answers, error) {
 	pgm, err := parse("query", query)
 	if err != nil {
@@ -269,6 +276,9 @@ func (e *Engine) Query(query string) (datalog.Answers, error) {
 	l := e.recoverLiteral(node.literal)
 	return l.Query(), nil
 }
+
+// The remainder of this file implements reference counting and uniqueness for
+// literals, constants, etc., used with a given engine.
 
 func (e *Engine) recoverClause(clause *clauseNode) *datalog.Clause {
 	head := e.recoverLiteral(clause.head)

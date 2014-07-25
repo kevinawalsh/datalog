@@ -49,20 +49,21 @@ func (t nodeType) Type() nodeType {
 }
 
 const (
-	nodeProgram nodeType = iota // (assertion | retraction | query)*
-	nodeAction                  // clause [ "." | "~" ]
-	nodeQuery                   // literal "?"
-	nodeClause                  // literal | literal ":-" literal ("," literal)*
-	nodeLiteral                 // predsym | predsym "(" term ("," term)* ")"
-	// nodePredSym                 // identifier | string
-	// nodeTerm                    // variable | constant
-	// nodeConstant                // identifier | string
-	nodeIdentifier
-	nodeString
-	nodeVariable
+	nodeProgram nodeType = iota // program ::= (assertion | retraction | query)*
+	nodeAction                  // action ::= clause [ "." | "~" ]
+	nodeQuery                   // query ::= literal "?"
+	nodeClause                  // clause ::= literal | literal ":-" literal ("," literal)*
+	nodeLiteral                 // literal ::= predsym | predsym "(" term ("," term)* ")"
+	// These next few are left blank since they are not present in the parse tree:
+	_              // nodePredSym ::= identifier | string
+	_              // nodeTerm ::= variable | constant
+	_              // nodeConstant ::= identifier | string
+	nodeIdentifier // see lexer for syntax
+	nodeString     // see lexer for syntax
+	nodeVariable   // see lexer for syntax
 )
 
-// nodeList stores a list of nodes in lexical order.
+// nodeList stores a list of nodes in the order they were lexed.
 type nodeList []node
 
 func (l *nodeList) append(n node) {
@@ -128,11 +129,13 @@ func newAction(pos pos, clause *clauseNode, action actionType) *actionNode {
 }
 
 func (n *actionNode) String() string {
+	var suffix string
 	if n.action == actionAssert {
-		return n.clause.String() + "."
+		suffix = "."
 	} else {
-		return n.clause.String() + "~"
+		suffix = "~"
 	}
+	return n.clause.String() + suffix
 }
 
 func (n *actionNode) Copy() node {
@@ -173,9 +176,8 @@ func newClause(pos pos, head *literalNode) *clauseNode {
 func (n *clauseNode) String() string {
 	if len(n.nodeList) == 0 {
 		return n.head.String()
-	} else {
-		return n.head.String() + " :- " + n.join(", ")
 	}
+	return n.head.String() + " :- " + n.join(", ")
 }
 
 func (n *clauseNode) Copy() node {
@@ -197,9 +199,8 @@ func newLiteral(pos pos, predsym string) *literalNode {
 func (n *literalNode) String() string {
 	if len(n.nodeList) == 0 {
 		return n.predsym
-	} else {
-		return n.predsym + "(" + n.join(", ") + ")"
 	}
+	return n.predsym + "(" + n.join(", ") + ")"
 }
 
 func (n *literalNode) Copy() node {

@@ -70,7 +70,7 @@ import (
 // readily available when processing datalog written in text. When datalog is
 // driven programmatically, assigning distinct textual names is a bother.
 // Second, many values in go can't be used as keys in a map. In particular,
-// literals can't be, since these are structs that containe slices. Finally, go
+// literals can't be, since these are structs that contain slices. Finally, go
 // doesn't provide weak references, so the typical approach to interning using a
 // map would lead to garbage collection issues.
 //
@@ -104,15 +104,17 @@ type DistinctConst struct {
 	_ byte // avoid confounding pointers due to zero size
 }
 
-func (p *DistinctConst) cID() id {
-	return id(reflect.ValueOf(p).Pointer())
+func (c *DistinctConst) cID() id {
+	return id(reflect.ValueOf(c).Pointer())
 }
 
-func (p *DistinctConst) Constant() bool {
+// Constant returns true for all objects that embed DistinctConst.
+func (c *DistinctConst) Constant() bool {
 	return true
 }
 
-func (p *DistinctConst) Variable() bool {
+// Variable returns false for all objects that embed DistinctConst.
+func (c *DistinctConst) Variable() bool {
 	return false
 }
 
@@ -132,15 +134,17 @@ type DistinctVar struct {
 	_ byte // avoid confounding pointers due to zero size
 }
 
-func (p *DistinctVar) vID() id {
-	return id(reflect.ValueOf(p).Pointer())
+func (v *DistinctVar) vID() id {
+	return id(reflect.ValueOf(v).Pointer())
 }
 
-func (p *DistinctVar) Constant() bool {
+// Constant returns false for all objects that embed DistinctVariable.
+func (v *DistinctVar) Constant() bool {
 	return false
 }
 
-func (p *DistinctVar) Variable() bool {
+// Variable returns true for all objects that embed DistinctVariable.
+func (v *DistinctVar) Variable() bool {
 	return true
 }
 
@@ -257,10 +261,12 @@ func (c *Clause) String() string {
 type Pred interface {
 	// pID returns a distinct number for each live Pred.
 	pID() id
-	Arity() int
-	SetArity(arity int)
 
-	// Assert introduces to new information about a predicate. Assert is only
+	// Arity returns the arity of the predicate, i.e. the number of arguments it
+	// takes.
+	Arity() int
+
+	// Assert introduces new information about a predicate. Assert is only
 	// called by the prover for Pred p if clause is safe and p == c.Head.Pred.
 	Assert(clause *Clause) error
 
@@ -277,19 +283,32 @@ type Pred interface {
 // DistinctPred can be embedded as an anonymous field in a struct T, enabling
 // *T to be used as a Pred.
 type DistinctPred struct {
-	arity int
+	// WithArity is the arity of the predicate. The field name Arity can not be
+	// used, since it clashes with the function of the same name. The prefix
+	// "With" was chosen to accommodate this syntax:
+	//   p := &DistinctPred{ WithArity: 3 }
+	WithArity int
 }
 
 func (p *DistinctPred) pID() id {
 	return id(reflect.ValueOf(p).Pointer())
 }
 
+// Arity returns the arity of the predicate, i.e. the number of arguments it
+// takes.
 func (p *DistinctPred) Arity() int {
-	return p.arity
+	return p.WithArity
 }
 
+// SetArity sets the arity of the predicate, i.e. the number of arguments it
+// takes. This function should be called only early when initializing a new Pred
+// object. This function exists only to avoid ugly compound initializers like:
+//   p := &datalog.DBPred{datalog.DistinctPred:datalog.DistinctPred{WithArity: 2}}
+// Instead, one can do:
+//   p := new(datalog.DBPred)
+//   p.SetArity(2)
 func (p *DistinctPred) SetArity(arity int) {
-	p.arity = arity
+	p.WithArity = arity
 }
 
 // DBPred holds a predicate that is defined by a database of facts and rules.
@@ -468,11 +487,11 @@ func unify(a, b *Literal) env {
 		return nil
 	}
 	e := make(env)
-	for i, _ := range a.Arg {
-		a_i := chase(a.Arg[i], e)
-		b_i := chase(b.Arg[i], e)
-		if a_i != b_i {
-			e = unifyTerms(a_i, b_i, e)
+	for i := range a.Arg {
+		aT := chase(a.Arg[i], e)
+		bT := chase(b.Arg[i], e)
+		if aT != bT {
+			e = unifyTerms(aT, bT, e)
 			if e == nil {
 				return nil
 			}
@@ -516,7 +535,7 @@ func (c *Clause) rename() *Clause {
 	return c.subst(e)
 }
 
-// hasVar checks if v appears in a litteral.
+// hasVar checks if v appears in a literal.
 func (l *Literal) hasVar(v Var) bool {
 	for _, arg := range l.Arg {
 		if v == arg {
@@ -590,6 +609,8 @@ func (q query) search(target *Literal, waiters ...*waiter) *subgoal {
 	return sg
 }
 
+// Search for DBPred examines facts and rules in the database for this predicate
+// and, if the clause head unifies with the target, reports the discovery.
 func (p *DBPred) Search(target *Literal, discovered func(c *Clause)) {
 	// Examine each fact or rule clause in the relevant database ...
 	// Example fact: ancestor(alice, bob)
@@ -647,7 +668,7 @@ func (q query) discoveredRule(rulesg *subgoal, rule *Clause) {
 func (q query) discoveredFact(factsg *subgoal, fact *Literal) {
 	if _, ok := factsg.facts[fact.tag()]; !ok {
 		factsg.facts[fact.tag()] = fact
-		// Rusume processing: For each deferred (rulesg, rule) pair, check if rule
+		// Resume processing: For each deferred (rulesg, rule) pair, check if rule
 		// can be simplified using information from fact. If so then we have
 		// discovered a new, simpler rule whose head unifies with rulesg.target.
 		for _, waiting := range factsg.waiters {

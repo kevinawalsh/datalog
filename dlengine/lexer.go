@@ -16,7 +16,7 @@
 // USA
 
 // This code borrows heavily from the lexer design and implementation described
-// by Rob Pike, "Lexical Scanning in Go", GTUG Syndey, Aug 30, 2011.
+// by Rob Pike, "Lexical Scanning in Go", GTUG Sydney, Aug 30, 2011.
 // See: http://cuddle.googlecode.com/hg/talk/lex.html#slide-40
 
 package dlengine
@@ -51,7 +51,7 @@ const (
 	itemLP       // "("
 	itemRP       // ")"
 	itemComma    // ","
-	// itemEqual   // "="
+	// itemEqual   // "="  // TODO(kwalsh) support infix equality?
 	itemDot        // "."
 	itemTilde      // "~"
 	itemVariable   // X, Alice, Hunter_22
@@ -130,13 +130,12 @@ func lexMain(l *lexer) stateFn {
 			return lexMain
 		case r == ':':
 			l.backup()
-			if strings.HasPrefix(l.input[l.pos:], ":-") {
-				l.pos += 2
-				l.emit(itemWhen)
-				return lexMain
-			} else {
+			if !strings.HasPrefix(l.input[l.pos:], ":-") {
 				return l.errorf(`expecting ":-"`)
 			}
+			l.pos += 2
+			l.emit(itemWhen)
+			return lexMain
 		case r == ',':
 			l.emit(itemComma)
 			return lexMain
@@ -262,7 +261,7 @@ func lex(name, input string) *lexer {
 
 // nextToken returns the next token from the input.
 func (l *lexer) nextToken() token {
-	for {
+	for l.state != nil {
 		select {
 		case token := <-l.items:
 			return token
@@ -270,18 +269,5 @@ func (l *lexer) nextToken() token {
 			l.state = l.state(l)
 		}
 	}
-	panic("not reached")
+	return token{itemEOF, ""}
 }
-
-// func main() {
-// 	l := lex("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n" +
-// 									 "ancestor(alice, bob).\n" +
-// 									 "ancestor(X, Y)?\n")
-// 	for {
-// 		token := l.nextToken()
-// 		fmt.Println(token)
-// 		if token.typ == itemEOF || token.typ == itemError {
-// 			break
-// 		}
-// 	}
-// }
