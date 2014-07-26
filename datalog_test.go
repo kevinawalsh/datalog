@@ -84,3 +84,150 @@ func TestProver(t *testing.T) {
 		t.Fatal("query got wrong number of answers")
 	}
 }
+
+type VarX struct {
+	DistinctVar
+}
+
+func (v *VarX) String() string {
+	return "X"
+}
+
+type VarY struct {
+	DistinctVar
+}
+
+func (v *VarY) String() string {
+	return "Y"
+}
+
+type ConstFelix struct {
+	DistinctConst
+}
+
+func (v *ConstFelix) String() string {
+	return "felix"
+}
+
+type ConstSylvester struct {
+	DistinctConst
+}
+
+func (v *ConstSylvester) String() string {
+	return "sylvester"
+}
+
+type PredSame struct {
+	DBPred
+}
+
+func (v *PredSame) String() string {
+	return "same"
+}
+
+type PredExists struct {
+	DBPred
+}
+
+func (v *PredExists) String() string {
+	return "exists"
+}
+
+func TestAssertRetract(t *testing.T) {
+	same := &PredSame{}
+	same.SetArity(2)
+
+	exists := &PredExists{}
+	exists.SetArity(1)
+
+	felix := &ConstFelix{}
+	sylvester := &ConstSylvester{}
+	x := &VarX{}
+	y := &VarY{}
+
+	// same(X, X) :- same(felix, felix)
+	rule := NewClause(NewLiteral(same, x, x), NewLiteral(same, felix, felix))
+	if err := rule.Assert(); err == nil {
+		t.Fatal("unsafe rule not detected")
+	}
+	if s := rule.String(); s != "same(X, X) :- same(felix, felix)" {
+		t.Fatalf("rule did not print as expected: %s", s)
+	}
+
+	// same(felix, X) :- same(X, felix).
+	rule = NewClause(NewLiteral(same, felix, x), NewLiteral(same, x, felix))
+	if err := rule.Assert(); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	// same(felix, felix).
+	rule = NewClause(NewLiteral(same, felix, felix))
+	if err := rule.Assert(); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	// same(sylvester, sylvester).
+	rule = NewClause(NewLiteral(same, sylvester, sylvester))
+	if err := rule.Assert(); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	// same(felix, x)?
+	query := NewLiteral(same, felix, x)
+	ans := query.Query()
+	if s := ans.String(); s != "same(felix, felix)." {
+		t.Fatalf("unexpected answer: %s", s)
+	}
+
+	// same(x, felix)?
+	query = NewLiteral(same, x, felix)
+	ans = query.Query()
+	if s := ans.String(); s != "same(felix, felix)." {
+		t.Fatalf("unexpected answer: %s", s)
+	}
+
+	// same(x, x)?
+	query = NewLiteral(same, x, x)
+	ans = query.Query()
+	if s := ans.String(); s != "same(felix, felix).\nsame(sylvester, sylvester).\n" &&
+		s != "same(sylvester, sylvester).\nsame(felix, felix).\n" {
+		t.Fatalf("unexpected answer: %s", s)
+	}
+
+	// same(felix, felix).
+	rule = NewClause(NewLiteral(same, felix, felix))
+	if err := rule.Retract(); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	// same(x, felix)?
+	query = NewLiteral(same, x, felix)
+	ans = query.Query()
+	if len(ans) != 0 {
+		t.Fatalf("unexpected answer: %s", ans)
+	}
+	if s := ans.String(); s != "" && s[0] != '%' {
+		t.Fatalf("unexpected answer: %s", ans)
+	}
+
+	// same(x, x) :- same(y, y), exists(x)
+	rule = NewClause(NewLiteral(same, x, x),
+		NewLiteral(same, y, y), NewLiteral(exists, x))
+	if err := rule.Assert(); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	// exists(felix).
+	rule = NewClause(NewLiteral(exists, felix))
+	if err := rule.Assert(); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	// same(x, x)?
+	query = NewLiteral(same, x, x)
+	ans = query.Query()
+	if len(ans) != 2 {
+		t.Fatalf("unexpected answer: %s", ans)
+	}
+
+}

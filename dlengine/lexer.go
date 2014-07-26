@@ -155,9 +155,13 @@ func lexMain(l *lexer) stateFn {
 }
 
 func lexString(l *lexer) stateFn {
+	r := l.next()
+	if r != '"' {
+		return l.errorf("expecting '\"', got: %v", r)
+	}
 	escape := false
 	for {
-		switch r := l.next(); {
+		switch r = l.next(); {
 		case r == eof:
 			return l.errorf("unexpected eof in string")
 		case escape:

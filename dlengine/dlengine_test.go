@@ -24,12 +24,17 @@ import (
 	"math/rand"
 	"os"
 	"testing"
+
+	"github.com/kevinawalsh/datalog/dlprim"
 )
 
 func TestLexer(t *testing.T) {
-	l := lex("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n"+
-		"ancestor(alice, bob).\n"+
-		"ancestor(X, Y)?\n")
+	l := lex("test", `
+			ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).
+			ancestor(alice, bob).
+			ancestor(alice, "bob smith").
+			ancestor(X, Y)?
+		`)
 	for {
 		item := l.nextToken()
 		if item.typ == itemError {
@@ -38,13 +43,17 @@ func TestLexer(t *testing.T) {
 		if item.typ == itemEOF {
 			break
 		}
+		fmt.Println(item)
 	}
 }
 
 func TestParser(t *testing.T) {
-	node, err := parse("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n"+
-		"ancestor(alice, bob).\n"+
-		"ancestor(X, Y)?\n")
+	node, err := parse("test", `
+			ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).
+			ancestor(alice, bob).
+			ancestor(alice, "bob smith").
+			ancestor(X, Y)?
+		`)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -63,20 +72,142 @@ func setup(t *testing.T, input string, asserts, retracts, queries, errors int) *
 	return e
 }
 
-func TestEngine(t *testing.T) {
-	input := `
-		ancestor(alice, bob).
+var simpleProgram = `
+		ancestor(alice, "bob smith").
 		ancestor(X, Y)?
-		ancestor(bob, carol).
+		ancestor("bob smith", carol).
 		ancestor(X, Y)?
 		ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).
 		ancestor(X, Y)?
 		ancestor(X)?
-		ancestor(bob, carol)~
+		ancestor("bob smith", carol)~
 		ancestor(alice, carol)?
 		`
-	setup(t, input, 3, 1, 5, 0)
+
+func TestEngine(t *testing.T) {
+	setup(t, simpleProgram, 3, 1, 5, 0)
 }
+
+func TestBatch(t *testing.T) {
+	e := NewEngine()
+	a, r, err := e.Batch("test", simpleProgram)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if a != 3 || r != 1 {
+		t.Fatalf("batch failed: %d %d\n", a, r)
+	}
+}
+
+func TestEngineErrors(t *testing.T) {
+	setup(t, "ancestor(?)", 0, 0, 0, 1)
+}
+
+func TestAssert(t *testing.T) {
+	e := NewEngine()
+	err := e.Assert("same(1, 1).")
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	err = e.Assert("same(1, 1)")
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	err = e.Assert("same(1, 1)?")
+	if err == nil {
+		t.Fatal("assert with query should be error")
+	}
+	err = e.Assert("same(1, 1)~")
+	if err == nil {
+		t.Fatal("assert with retraction should be error")
+	}
+	err = e.Assert("same(1, 1). same(2, 2).")
+	if err == nil {
+		t.Fatal("multiple stmts should fail")
+	}
+}
+
+func TestRetract(t *testing.T) {
+	e := NewEngine()
+	err := e.Retract("same(1, 1)~")
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	err = e.Retract("same(1, 1)")
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	err = e.Retract("same(1, 1)?")
+	if err == nil {
+		t.Fatal("retract with query should be error")
+	}
+	err = e.Retract("same(1, 1).")
+	if err == nil {
+		t.Fatal("retract with assertion should be error")
+	}
+	err = e.Retract("same(1, 1)~ same(2, 2)~")
+	if err == nil {
+		t.Fatal("multiple stmts should fail")
+	}
+}
+
+func TestQuery(t *testing.T) {
+	e := NewEngine()
+	_, err := e.Query("same(1, 1)?")
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	_, err = e.Query("same(1, 1)")
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	_, err = e.Query("same(1, 1).")
+	if err == nil {
+		t.Fatal("query for assertion should be error")
+	}
+	_, err = e.Query("same(1, 1)~")
+	if err == nil {
+		t.Fatal("query for retraction should be error")
+	}
+	_, err = e.Query("same(1, 1)? same(2, 2)?")
+	if err == nil {
+		t.Fatal("multiple stmts should fail")
+	}
+}
+
+func TestAddPred(t *testing.T) {
+	e := NewEngine()
+	e.AddPred(dlprim.Equals)
+	ans, err := e.Query("=(1, 1)?")
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if len(ans) != 1 {
+		t.Fatal("expecting answer for query =(1, 1) but got nothing")
+	}
+	err = e.Assert("equals(1, 2)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = e.Retract("same(1, 1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = e.Assert("=(1, 0)")
+	if err == nil {
+		t.Fatal("datalog allowed client to assert 1 = 0.")
+	}
+	err = e.Retract("=(1, 1)")
+	if err == nil {
+		t.Fatal("datalog allowed client to retract 1 = 1.")
+	}
+	a, r, q, errs := e.Process("bad assertion", "=(1, 0).")
+	if a != 1 || r != 0 || q != 0 || errs != 1 {
+		t.Fatalf("setup process failed: %d %d %d %d\n", a, r, q, errs)
+	}
+}
+
+// The remainder of this file is a simiple graph path-finding benchmark.
 
 type vertex []int
 

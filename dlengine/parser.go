@@ -22,6 +22,7 @@ package dlengine
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -246,7 +247,11 @@ func (parser *parser) parseTerm() (node, error) {
 	case itemIdentifier:
 		n = newLeaf(nodeIdentifier, parser.pos, parser.token.val)
 	case itemString:
-		n = newLeaf(nodeString, parser.pos, parser.token.val)
+		s, err := strconv.Unquote(parser.token.val)
+		if err != nil {
+			return nil, fmt.Errorf("datalog: improperly quoted string: %v", parser.token.val)
+		}
+		n = newLeaf(nodeString, parser.pos, s)
 	default:
 		return nil, fmt.Errorf("datalog: expecting variable or constant, found: %v", parser.token)
 	}

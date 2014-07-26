@@ -25,6 +25,7 @@ package dlengine
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/kevinawalsh/datalog"
 )
@@ -227,8 +228,11 @@ func (e *Engine) query(literal *literalNode) error {
 }
 
 // Assert parses the given string and adds the resulting assertion to the
-// database.
+// database. If assertion does not end in '.', one is added.
 func (e *Engine) Assert(assertion string) error {
+	if !strings.HasSuffix(assertion, ".") {
+		assertion += "."
+	}
 	pgm, err := parse("assert", assertion)
 	if err != nil {
 		return err
@@ -237,15 +241,18 @@ func (e *Engine) Assert(assertion string) error {
 		return fmt.Errorf("datalog: expecting one assertion: %s", assertion)
 	}
 	node, ok := pgm.nodeList[0].(*actionNode)
-	if !ok {
+	if !ok || node.action != actionAssert {
 		return fmt.Errorf("datalog: expecting assertion: %s", assertion)
 	}
 	return e.assert(node.clause, false)
 }
 
 // Retract parses the given string and removes the resulting assertion from the
-// database.
+// database. If retraction does not end in '~', one is added.
 func (e *Engine) Retract(retraction string) error {
+	if !strings.HasSuffix(retraction, "~") {
+		retraction += "~"
+	}
 	pgm, err := parse("retract", retraction)
 	if err != nil {
 		return err
@@ -254,14 +261,18 @@ func (e *Engine) Retract(retraction string) error {
 		return fmt.Errorf("datalog: expecting one retraction: %s", retraction)
 	}
 	node, ok := pgm.nodeList[0].(*actionNode)
-	if !ok {
+	if !ok || node.action != actionRetract {
 		return fmt.Errorf("datalog: expecting retraction: %s", retraction)
 	}
 	return e.retract(node.clause, false)
 }
 
-// Query parses the given string and executes the resulting query.
+// Query parses the given string and executes the resulting query. If query does
+// not end in '?', one is added.
 func (e *Engine) Query(query string) (datalog.Answers, error) {
+	if !strings.HasSuffix(query, "?") {
+		query += "?"
+	}
 	pgm, err := parse("query", query)
 	if err != nil {
 		return nil, err

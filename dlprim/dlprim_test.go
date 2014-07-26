@@ -69,3 +69,15 @@ func TestEquals(t *testing.T) {
 	check(t, e, "old(bob)?", 1)
 	check(t, e, "old(X)?", 2)
 }
+
+func TestEqualsFail(t *testing.T) {
+	e := setup(t, "", 0, 0, 0, 0)
+	err := e.Assert("=(1, 0).")
+	if err == nil {
+		t.Fatal("datalog allowed client to assert 1 = 0.")
+	}
+	err = e.Retract("=(1, 1)~")
+	if err == nil {
+		t.Fatal("datalog allowed client to retract 1 = 1.")
+	}
+}

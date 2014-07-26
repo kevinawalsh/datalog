@@ -104,6 +104,12 @@ type DistinctConst struct {
 	_ byte // avoid confounding pointers due to zero size
 }
 
+// String for a DistinctConst prints the internal ID. This should be
+// hidden by types T in which DistinctConst is embedded.
+func (c *DistinctConst) String() string {
+	return fmt.Sprintf("Const{0x%x}", c.cID())
+}
+
 func (c *DistinctConst) cID() id {
 	return id(reflect.ValueOf(c).Pointer())
 }
@@ -132,6 +138,12 @@ type Var interface {
 // that has no name or associated data but is distinct from all other live Vars.
 type DistinctVar struct {
 	_ byte // avoid confounding pointers due to zero size
+}
+
+// String for a DistinctVar prints the internal ID. This should be
+// hidden by types T in which DistinctVar is embedded.
+func (v *DistinctVar) String() string {
+	return fmt.Sprintf("Var{0x%x}", v.vID())
 }
 
 func (v *DistinctVar) vID() id {
@@ -290,6 +302,12 @@ type DistinctPred struct {
 	WithArity int
 }
 
+// String for a DistinctPred prints the internal ID and the arity. This should
+// be hidden by types T in which Distinct and the arityConst is embedded.
+func (p *DistinctPred) String() string {
+	return fmt.Sprintf("Pred{0x%x}/%d", p.pID(), p.Arity())
+}
+
 func (p *DistinctPred) pID() id {
 	return id(reflect.ValueOf(p).Pointer())
 }
@@ -372,11 +390,11 @@ func (a Answers) String() string {
 	if len(a) == 0 {
 		return "% empty"
 	} else if len(a) == 1 {
-		return a[0].String()
+		return a[0].String() + "."
 	} else {
 		var buf bytes.Buffer
 		for _, fact := range a {
-			fmt.Fprintf(&buf, "%s\n", fact.String())
+			fmt.Fprintf(&buf, "%s.\n", fact.String())
 		}
 		return buf.String()
 	}
@@ -441,7 +459,11 @@ func (l *Literal) rename() *Literal {
 
 // chase applies env to a term until a constant or an unmapped variable is reached.
 func chase(t Term, e env) Term {
-	for v, ok := t.(Var); ok; {
+	for {
+		v, ok := t.(Var)
+		if !ok {
+			break
+		}
 		next, ok := e[v]
 		if !ok {
 			break
@@ -470,12 +492,6 @@ func unifyTerms(a, b Term, e env) env {
 			return nil
 		}
 	}
-	return e
-}
-
-// unify var var maps var to var.
-func (v *DistinctVar) unifyVar(v2 Var, e env) env {
-	e[v2] = v
 	return e
 }
 
