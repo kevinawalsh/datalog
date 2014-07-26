@@ -134,7 +134,6 @@ func lexMain(l *lexer) stateFn {
 			if !strings.HasPrefix(l.input[l.pos:], ":-") {
 				return l.errorf(`expecting ":-"`)
 			}
-			fmt.Println("good")
 			l.pos += 2
 			l.emit(itemWhen)
 			return lexMain
