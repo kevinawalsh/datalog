@@ -76,9 +76,11 @@ func TestLexerFail(t *testing.T) {
 
 func TestParser(t *testing.T) {
 	input := `ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).
-			ancestor(alice, bob).
-			ancestor(alice, "bob smith").
-			ancestor(X, Y)?`
+ancestor(alice, bob).
+ancestor(alice, "bob smith").
+true.
+false~
+ancestor(X, Y)?`
 	node, err := parse("test",  input)
 	if err != nil {
 		t.Fatal(err.Error())
@@ -87,9 +89,16 @@ func TestParser(t *testing.T) {
 		t.Fatal("missing parse node")
 	}
 	if s := node.String(); s != input {
-		t.Fatalf("bad format: %s\n", s)
+		t.Fatalf("bad format, output:\n%s\nversus input:\n%s\n", s, input)
+	}
+
+	c := node.Copy()
+	if c == nil || c.String() != input {
+		t.Fatalf("bad format after copy, output:\n%s\nversus input:\n%s\n", c, input)
 	}
 }
+
+
 
 func setup(t *testing.T, input string, asserts, retracts, queries, errors int) *Engine {
 	e := NewEngine()

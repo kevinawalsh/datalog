@@ -220,7 +220,11 @@ func newLeaf(t nodeType, pos pos, val string) *leafNode {
 }
 
 func (n *leafNode) String() string {
-	return n.val
+	if n.nodeType == nodeString {
+		return strconv.Quote(n.val)
+	} else {
+		return n.val
+	}
 }
 
 func (n *leafNode) Copy() node {
