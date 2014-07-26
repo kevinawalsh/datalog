@@ -75,17 +75,19 @@ func TestLexerFail(t *testing.T) {
 }
 
 func TestParser(t *testing.T) {
-	node, err := parse("test", `
-			ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).
+	input := `ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).
 			ancestor(alice, bob).
 			ancestor(alice, "bob smith").
-			ancestor(X, Y)?
-		`)
+			ancestor(X, Y)?`
+	node, err := parse("test",  input)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
 	if node == nil {
 		t.Fatal("missing parse node")
+	}
+	if s := node.String(); s != input {
+		t.Fatalf("bad format: %s\n", s)
 	}
 }
 

@@ -130,10 +130,8 @@ func lexMain(l *lexer) stateFn {
 			l.emit(itemQuestion)
 			return lexMain
 		case r == ':':
-			fmt.Println("got :")
 			l.backup()
 			if !strings.HasPrefix(l.input[l.pos:], ":-") {
-				fmt.Println("bad")
 				return l.errorf(`expecting ":-"`)
 			}
 			fmt.Println("good")
