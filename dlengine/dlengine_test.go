@@ -28,22 +28,49 @@ import (
 	"github.com/kevinawalsh/datalog/dlprim"
 )
 
+func runLexer(t *testing.T, l *lexer) token {
+	for {
+		item := l.nextToken()
+		if item.String() == "" {
+			return item
+		}
+		if item.typ == itemError {
+			return item
+		}
+		if item.typ == itemEOF {
+			return item
+		}
+	}
+}
+
 func TestLexer(t *testing.T) {
 	l := lex("test", `
 			ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).
 			ancestor(alice, bob).
-			ancestor(alice, "bob smith").
+			% this is a comment
+			ancestor(alice, "bob smith"). % this is another comment
 			ancestor(X, Y)?
 		`)
-	for {
-		item := l.nextToken()
-		if item.typ == itemError {
-			t.Fatalf("lex error: %v", item)
-		}
-		if item.typ == itemEOF {
-			break
-		}
-		fmt.Println(item)
+	item := runLexer(t, l)
+	if item.typ != itemEOF {
+		t.Fatalf("unexpected token: %s", item)
+	}
+}
+
+func TestLexerFail(t *testing.T) {
+	l := lex("test", `ancestor(X, Z) :- ancestor`)
+	item := runLexer(t, l)
+	if item.typ != itemEOF {
+		t.Fatalf("unexpected token: %s", item)
+	}
+
+	l = lex("test", `ancestor(X, Z) : ancestor(X, Y), ancestor(Y, Z).`)
+	item = runLexer(t, l)
+	if item.typ != itemError {
+		t.Fatalf("unexpected token: %s", item)
+	}
+	if l.nextToken().typ != itemError {
+		t.Fatalf("unexpected token: %s", item)
 	}
 }
 

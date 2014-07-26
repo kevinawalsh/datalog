@@ -88,6 +88,7 @@ type lexer struct {
 	width int        // width of last rune read from input.
 	state stateFn    // current state.
 	items chan token // channel of scanned items.
+	last  token      // last token returned by nextToken().
 }
 
 // emit passes an token back to the client.
@@ -129,10 +130,13 @@ func lexMain(l *lexer) stateFn {
 			l.emit(itemQuestion)
 			return lexMain
 		case r == ':':
+			fmt.Println("got :")
 			l.backup()
 			if !strings.HasPrefix(l.input[l.pos:], ":-") {
+				fmt.Println("bad")
 				return l.errorf(`expecting ":-"`)
 			}
+			fmt.Println("good")
 			l.pos += 2
 			l.emit(itemWhen)
 			return lexMain
@@ -260,18 +264,22 @@ func lex(name, input string) *lexer {
 		input: input,
 		state: lexMain,
 		items: make(chan token, 2), // Two items is sufficient.
+		last: token{itemEOF, ""},
 	}
 }
 
 // nextToken returns the next token from the input.
 func (l *lexer) nextToken() token {
-	for l.state != nil {
+	for {
 		select {
-		case token := <-l.items:
-			return token
+		case l.last = <-l.items:
+			return l.last
 		default:
+			if l.state == nil {
+				// only happens for nextToken after itemEOF or itemError
+				return l.last
+			}
 			l.state = l.state(l)
 		}
 	}
-	return token{itemEOF, ""}
 }
