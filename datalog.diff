@@ -1,0 +1,2459 @@
+#* 
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-23T22:49:23-0700
+#* 
+#- Code review of the full datalog module, minus some non-code files
+#- 
+#- A few comments from golint:
+#- 
+#- datalog.go:111:1: exported method DistinctConst.Constant should have comment or be unexported
+#- datalog.go:115:1: exported method DistinctConst.Variable should have comment or be unexported
+#- datalog.go:139:1: exported method DistinctVar.Constant should have comment or be unexported
+#- datalog.go:143:1: exported method DistinctVar.Variable should have comment or be unexported
+#- datalog.go:287:1: exported method DistinctPred.Arity should have comment or be unexported
+#- datalog.go:291:1: exported method DistinctPred.SetArity should have comment or be unexported
+#- datalog.go:593:1: exported method DBPred.Search should have comment or be unexported
+#- datalog.go:472:3: don't use underscores in Go names; var a_i should be aI
+#- datalog.go:473:3: don't use underscores in Go names; var b_i should be bI
+#- datalog.go:471:9: should omit 2nd value from range; this loop is equivalent to `for i := range ...`
+#- datalog.go:458:1: receiver name v should be consistent with previous receiver name p for DistinctVar
+#- 
+#- 
+#- dlengine.go:121:1: comment on exported function NewEngine should be of the form "NewEngine ..."
+#- dlengine.go:130:1: comment on exported method Engine.AddPred should be of the form "AddPred ..."
+#- dlengine.go:139:1: exported method Engine.Process should have comment or be unexported
+#- dlengine.go:172:1: exported method Engine.Batch should have comment or be unexported
+#- dlengine.go:227:1: exported method Engine.Assert should have comment or be unexported
+#- dlengine.go:242:1: exported method Engine.Retract should have comment or be unexported
+#- dlengine.go:257:1: exported method Engine.Query should have comment or be unexported
+#- lexer.go:137:11: if block ends with a return statement, so drop this else and outdent its block
+#- parser.go:133:9: if block ends with a return statement, so drop this else and outdent its block
+#- parser.go:176:9: if block ends with a return statement, so drop this else and outdent its block
+#- parser.go:200:9: if block ends with a return statement, so drop this else and outdent its block
+#- 
+#- 
+#- and from go vet:
+#- 
+#- dlengine_test.go:37: possible formatting directive in Fatal call
+#- lexer.go:273: unreachable code
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T16:11:18-0700
+#*
+#- BTW, I have a good friend (Jason Mackay) who worked on SecPAL and has quite a
+#- bit of experience with datalog and its implementations. I'd like to point him
+#- at this implementation, if you don't mind.
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T12:59:06-0400
+#**
+#-- Please do.
+#--
+diff --git a/Readme.md b/Readme.md
+new file mode 100644
+index 0000000..21a4055
+--- /dev/null
++++ b/Readme.md
+@@ -0,0 +1,28 @@
++Datalog
++=======
++
++This library implements a [datalog
++system](http://www.ccs.neu.edu/home/ramsdell/tools/datalog/) in Go. The library
++is split into three packages:
++
++* datalog -- The core datalog types and prover.
++* datalog/dlengine -- A text-based intepreter that serves as a front-end to the
++  datalog prover.
++* datalog/dlprim -- Custom datalog primitives, like the Equals predicate.
++
++Setup
++-----
++
++After installing a suitable version of Go, run:
++
++`go get github.com/kevinawalsh/datalog`
++
++Documentation
++-------------
++
++See the sources, or view the documentation here:
++
++* [datalog](http://godoc.org/github.com/kevinawalsh/datalog)
++* [datalog/dlengine](http://godoc.org/github.com/kevinawalsh/datalog/dlengine)
++* [datalog/dlprim](http://godoc.org/github.com/kevinawalsh/datalog/dlprim)
++
+diff --git a/datalog.go b/datalog.go
+new file mode 100644
+index 0000000..2149a25
+--- /dev/null
++++ b/datalog.go
+@@ -0,0 +1,678 @@
++// Copyright (c) 2014, Kevin Walsh.  All rights reserved.
++//
++// This library is free software; you can redistribute it and/or modify
++// it under the terms of the GNU Lesser General Public License as
++// published by the Free Software Foundation; either version 2 of the
++// License, or (at your option) any later version.
++//
++// This library is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++// Lesser General Public License for more details.
++//
++// You should have received a copy of the GNU Lesser General Public
++// License along with this library; if not, write to the Free Software
++// Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
++// USA
++
++// Package datalog implements a datalog prover.
++//
++// This package is based on a C and Lua library found at:
++//
++//   http://www.ccs.neu.edu/home/ramsdell/tools/datalog/
++//
++// That library includes the following copyright and license notice:
++//
++//   Datalog 2.4
++//
++//   A small Datalog interpreter written in Lua designed to be used via a
++//   simple C API.
++//
++//   John D. Ramsdell
++//   Copyright (C) 2004 The MITRE Corporation
++//
++//   This library is free software; you can redistribute it and/or modify
++//   it under the terms of the GNU Lesser General Public License as
++//   published by the Free Software Foundation; either version 2 of the
++//   License, or (at your option) any later version.
++//
++//   This library is distributed in the hope that it will be useful, but
++//   WITHOUT ANY WARRANTY; without even the implied warranty of
++//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++//   Lesser General Public License for more details.
++//
++//   You should have received a copy of the GNU Lesser General Public
++//   License along with this library; if not, write to the Free Software
++//   Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
++//   USA
++package datalog
++
++import (
++	"bytes"
++	"errors"
++	"fmt"
++	"reflect"
++)
++
++// Notes on uniqueness: The datalog engine must be able to tell when two
++// variables are the "same". When variables are represented by distinct textual
++// names, like "X" or "Y", this is trivial: just compare the text. This applies
++// to constants, identifiers, and predicate symbols as well.
++//
++// As an optimization, the Lua implementation interns all variables (and
++// identifiers, etc.) before processing. This step requires that: (1) each
++// variable can be used as the key to a map; and (2) a variable can be stored as
++// a value in a map without preventing garbage collection. The Lua
++// implementation solves (1) using the textual names, and solves (2) using maps
++// with weak references.
++//
++// All of the above is problematic in go. First, distinct textual names are only
++// readily available when processing datalog written in text. When datalog is
++// driven programmatically, assigning distinct textual names is a bother.
++// Second, many values in go can't be used as keys in a map. In particular,
++// literals can't be, since these are structs that containe slices. Finally, go
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-23T22:58:28-0700
+#*
+#- typo "containe"
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T12:59:12-0400
+#**
+#-- Fixed.
+#--
++// doesn't provide weak references, so the typical approach to interning using a
++// map would lead to garbage collection issues.
++//
++// This implementation uses a different approach. It allows a variety of pointer
++// types to be used as variables, identifiers, constants, or predicate symbols.
++// Two variables (etc.) are then considered the "same" if the pointers are
++// equal, i.e. if they point to the same go object. It is the caller's
++// responsibility to ensure that the same go object is used when the same
++// variable is intended.
++//
++// There is a wrinkle, however: there is no way in go to express a constraint
++// that only pointer types can be used as variables. We work around this by
++// requiring variables to embed an anonymous Var struct. Only a pointer to [a
++// struct containing] Var can be used as a variable.
++
++// id is used to distinguish different variables, constants, etc.
++type id uintptr
++
++// Const represents a concrete datalog value that can be used as a term. Typical
++// examples include alice, bob, "Hello", 42, -3, and other printable sequences.
++// This implementation doesn't place restrictions on the contents.
++type Const interface {
++	// cID returns a distinct number for each live Const.
++	cID() id
++	Term
++}
++
++// DistinctConst can be embedded as an anonymous field in a struct T, enabling
++// *T to be used as a Const.
++type DistinctConst struct {
++	_ byte // avoid confounding pointers due to zero size
++}
++
++func (p *DistinctConst) cID() id {
++	return id(reflect.ValueOf(p).Pointer())
++}
++
++func (p *DistinctConst) Constant() bool {
++	return true
++}
++
++func (p *DistinctConst) Variable() bool {
++	return false
++}
++
++// Var represents a datalog variable. These are typically written with initial
++// uppercase, e.g. X, Y, Left_child. This implementation doesn't restrict or
++// even require variable names.
++type Var interface {
++	// vID returns a distinct number for each live Var.
++	vID() id
++	Term
++}
++
++// DistinctVar can be embedded as an anonymous field in a struct T, enabling *T
++// to be used as a Var. In addition, &DistinctVar{} can be used as a fresh Var
++// that has no name or associated data but is distinct from all other live Vars.
++type DistinctVar struct {
++	_ byte // avoid confounding pointers due to zero size
++}
++
++func (p *DistinctVar) vID() id {
++	return id(reflect.ValueOf(p).Pointer())
++}
++
++func (p *DistinctVar) Constant() bool {
++	return false
++}
++
++func (p *DistinctVar) Variable() bool {
++	return true
++}
++
++// Term represents an argument of a literal. Var and Const implement Term.
++type Term interface {
++	// Constant checks whether this term is a Const. Same as _, ok := t.(Const).
++	Constant() bool
++
++	// Variable checks whether this term is a Var. Same as _, ok := t.(Var).
++	Variable() bool
++}
++
++// Literal represents a predicate with terms for arguments. Typical examples
++// include person(alice), ancestor(alice, bob), and ancestor(eve, X).
++type Literal struct {
++	Pred      Pred
++	Arg       []Term
++	cachedTag *string
++}
++
++// NewLiteral returns a new literal with the given predicate and arguments. The
++// number of arguments must match the predicate's arity, else panic ensues.
++func NewLiteral(p Pred, arg ...Term) *Literal {
++	if p.Arity() != len(arg) {
++		panic("datalog: arity mismatch")
++	}
++	return &Literal{Pred: p, Arg: arg}
++}
++
++// String is a pretty-printer for literals. It produces traditional datalog
++// syntax, assuming that all the predicates and terms do when printed with %v.
++func (l *Literal) String() string {
++	var buf bytes.Buffer
++	fmt.Fprintf(&buf, "%v", l.Pred)
++	if len(l.Arg) > 0 {
++		fmt.Fprintf(&buf, "(%v", l.Arg[0])
++		for i := 1; i < len(l.Arg); i++ {
++			fmt.Fprintf(&buf, ", %v", l.Arg[i])
++		}
++		fmt.Fprintf(&buf, ")")
++	}
++	return buf.String()
++}
++
++// tag returns a "variant tag" for a literal, such that two literals have the
++// same variant tag if and only if they are identical modulo variable renaming.
++func (l *Literal) tag() string {
++	if l.cachedTag != nil {
++		return *l.cachedTag
++	}
++	var buf bytes.Buffer
++	l.tagf(&buf, make(map[id]int))
++	tag := buf.String()
++	l.cachedTag = &tag
++	return tag
++}
++
++// tagf writes a literal's "variant tag" into buf after renaming variables
++// according to the varNum map. If the varNum map is nil, then variables are not
++// renamed.
++func (l *Literal) tagf(buf *bytes.Buffer, varNum map[id]int) {
++	// Tag encoding: hex(pred-id),term,term,...
++	// with varMap, term consts are hex, term vars are "v0", "v1", ...
++	// with no varMap, terms are all hex
++	fmt.Fprintf(buf, "%x", l.Pred.pID())
++	for _, arg := range l.Arg {
++		switch arg := arg.(type) {
++		case Const:
++			fmt.Fprintf(buf, ",%x", arg.cID())
++		case Var:
++			vid := arg.vID()
++			num, ok := varNum[vid]
++			if !ok {
++				num = len(varNum)
++				varNum[vid] = num
++			}
++			fmt.Fprintf(buf, ",v%d", num)
++		default:
++			panic("datalog: not reached -- term is always Var or Const")
++		}
++	}
++}
++
++// Clause has a head literal and zero or more body literals. With an empty
++// body, it is known as a fact. Otherwise, a rule.
++// Example fact: parent(alice, bob)
++// Example rule: ancestor(A, C) :- ancestor(A, B), ancestor(B, C)
++type Clause struct {
++	Head *Literal
++	Body []*Literal
++}
++
++// NewClause constructs a new fact (if there are no arguments) or rule
++// (otherwise).
++func NewClause(head *Literal, body ...*Literal) *Clause {
++	return &Clause{Head: head, Body: body}
++}
++
++// String is a pretty-printer for clauses. It produces traditional datalog
++// syntax, assuming that all the predicates and terms do when printed with %v.
++func (c *Clause) String() string {
++	var buf bytes.Buffer
++	fmt.Fprintf(&buf, "%s", c.Head.String())
++	if len(c.Body) > 0 {
++		fmt.Fprintf(&buf, " :- %s", c.Body[0].String())
++		for i := 1; i < len(c.Body); i++ {
++			fmt.Fprintf(&buf, ", %s", c.Body[i].String())
++		}
++	}
++	return buf.String()
++}
++
++// Pred represents a logical predicate, or relation, of a given arity.
++type Pred interface {
++	// pID returns a distinct number for each live Pred.
++	pID() id
++	Arity() int
++	SetArity(arity int)
++
++	// Assert introduces to new information about a predicate. Assert is only
++	// called by the prover for Pred p if clause is safe and p == c.Head.Pred.
++	Assert(clause *Clause) error
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T16:03:35-0700
+#*
+#- "introduces to" -> "introduces" ?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T12:59:17-0400
+#**
+#-- Fixed.
+#--
++
++	// Retract removes information about a predicate. Retract is only called by
++	// the prover for Pred p if p == c.Head.Pred.
++	Retract(clause *Clause) error
++
++	// Search is called by the prover to discover information about a predicate.
++	// For each fact or rule whose head unifies with the target, Search should
++	// call the given callback.
++	Search(target *Literal, discovered func(c *Clause))
++}
++
++// DistinctPred can be embedded as an anonymous field in a struct T, enabling
++// *T to be used as a Pred.
++type DistinctPred struct {
++	arity int
++}
++
++func (p *DistinctPred) pID() id {
++	return id(reflect.ValueOf(p).Pointer())
++}
++
++func (p *DistinctPred) Arity() int {
++	return p.arity
++}
++
++func (p *DistinctPred) SetArity(arity int) {
++	p.arity = arity
++}
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-23T23:14:00-0700
+#*
+#- Doc strings for these two methods? Though I guess it's pretty obvious.
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T12:59:21-0400
+#**
+#-- Fixed.
+#--
++
++// DBPred holds a predicate that is defined by a database of facts and rules.
++type DBPred struct {
++	db []*Clause
++	DistinctPred
++}
++
++// Assert checks if the clause is safe then calls Assert() on the appropriate
++// Pred.
++func (c *Clause) Assert() error {
++	if !c.Safe() {
++		return errors.New("datalog: can't assert unsafe clause")
++	}
++	return c.Head.Pred.Assert(c)
++}
++
++// Assert for a DBPred inserts c into the database for this predicate.
++func (p *DBPred) Assert(c *Clause) error {
++	p.db = append(p.db, c)
++	return nil
++}
++
++// tag returns a "variant tag" for a clause, such that two clauses have the
++// same variant tag if and only if they are identical modulo variable renaming.
++func (c *Clause) tag() string {
++	var buf bytes.Buffer
++	varMap := make(map[id]int)
++	c.Head.tagf(&buf, varMap)
++	for _, literal := range c.Body {
++		literal.tagf(&buf, varMap)
++	}
++	return buf.String()
++}
++
++// Retract calls Retract() on the appropriate Pred.
++func (c *Clause) Retract() error {
++	return c.Head.Pred.Retract(c)
++}
++
++// Retract for a DBPred removes a clause from the relevant database, along with
++// all structurally identical clauses modulo variable renaming.
++func (p *DBPred) Retract(c *Clause) error {
++	tag := c.tag()
++	for i := 0; i < len(p.db); i++ {
++		if p.db[i].tag() == tag {
++			n := len(p.db)
++			p.db[i], p.db[n-1], p.db = p.db[n-1], nil, p.db[:n-1]
++			i--
++		}
++	}
++	return nil
++}
++
++// Answers to a query are facts.
++type Answers []*Literal
++
++// String is a pretty-printer for Answers. It produces traditional datalog
++// syntax, assuming that all the predicates and terms do when printed with %v.
++func (a Answers) String() string {
++	if len(a) == 0 {
++		return "% empty"
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T16:14:04-0700
+#*
+#- Is this traditional datalog syntax, then? Otherwise, why the "%"?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T12:59:27-0400
+#**
+#-- "%" is datalog's comment character. I wanted something visible.
+#--
++	} else if len(a) == 1 {
++		return a[0].String()
++	} else {
++		var buf bytes.Buffer
++		for _, fact := range a {
++			fmt.Fprintf(&buf, "%s\n", fact.String())
++		}
++		return buf.String()
++	}
++}
++
++// Query returns a list of facts that unify with the given literal.
++func (l *Literal) Query() Answers {
++	facts := make(query).search(l).facts
++	if len(facts) == 0 {
++		return nil
++	}
++	a := make(Answers, len(facts))
++	i := 0
++	for _, fact := range facts {
++		a[i] = fact
++		i++
++	}
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T16:16:59-0700
+#*
+#- I was briefly confused here about why you weren't using a normal for
+#- loop. Then I saw that facts is a map.
+#- 
++	return a
++}
++
++// An env maps variables to terms. It is used for substitutions.
++type env map[Var]Term
++
++// subst creates a new literal by applying env.
++func (l *Literal) subst(e env) *Literal {
++	if e == nil || len(e) == 0 || len(l.Arg) == 0 {
++		return l
++	}
++	s := &Literal{Pred: l.Pred, Arg: make([]Term, len(l.Arg))}
++	copy(s.Arg, l.Arg)
++	for i, arg := range l.Arg {
++		if v, ok := arg.(Var); ok {
++			if t, ok := e[v]; ok {
++				s.Arg[i] = t
++			}
++		}
++	}
++	return s
++}
++
++// shuffle extends env by adding, for each unmapped variable in the literal's
++// arguments, a mappings to a fresh variable. If env is nil, a new environment
++// is created.
++func (l *Literal) shuffle(e env) env {
++	if e == nil {
++		e = make(env)
++	}
++	for _, arg := range l.Arg {
++		if v, ok := arg.(Var); ok {
++			if _, ok := e[v]; !ok {
++				e[v] = &DistinctVar{}
++			}
++		}
++	}
++	return e
++}
++
++// rename generates a new literal by renaming all variables to fresh ones.
++func (l *Literal) rename() *Literal {
++	return l.subst(l.shuffle(nil))
++}
++
++// chase applies env to a term until a constant or an unmapped variable is reached.
++func chase(t Term, e env) Term {
++	for v, ok := t.(Var); ok; {
++		next, ok := e[v]
++		if !ok {
++			break
++		}
++		t = next
++	}
++	return t
++}
++
++// unify two terms, where a != b
++func unifyTerms(a, b Term, e env) env {
++	if va, ok := a.(Var); ok {
++		if vb, ok := b.(Var); ok {
++			// unify var var
++			e[va] = vb
++		} else {
++			// unify var const
++			e[va] = b
++		}
++	} else {
++		if vb, ok := b.(Var); ok {
++			// unify const var
++			e[vb] = a
++		} else {
++			// unify const const
++			return nil
++		}
++	}
++	return e
++}
++
++// unify var var maps var to var.
++func (v *DistinctVar) unifyVar(v2 Var, e env) env {
++	e[v2] = v
++	return e
++}
++
++// unify attempts to unify two literals. It returns an environment such that
++// a.subst(env) is structurally identical to b.subst(env), or nil if no such
++// environment is possible.
++func unify(a, b *Literal) env {
++	if a.Pred != b.Pred {
++		return nil
++	}
++	e := make(env)
++	for i, _ := range a.Arg {
++		a_i := chase(a.Arg[i], e)
++		b_i := chase(b.Arg[i], e)
++		if a_i != b_i {
++			e = unifyTerms(a_i, b_i, e)
++			if e == nil {
++				return nil
++			}
++		}
++	}
++	return e
++}
++
++// drop creates a new clause by dropping d leading parts from the body, then
++// applying env to head and to each remaining body part. Caller must ensure
++// len(c.Body) >= d.
++func (c *Clause) drop(d int, e env) *Clause {
++	n := len(c.Body) - d
++	s := &Clause{
++		Head: c.Head.subst(e),
++		Body: make([]*Literal, n),
++	}
++	for i := 0; i < n; i++ {
++		s.Body[i] = c.Body[i+d].subst(e)
++	}
++	return s
++}
++
++// subst creates a new clause by applying env to head and to each body part
++func (c *Clause) subst(e env) *Clause {
++	if e == nil || len(e) == 0 {
++		return c
++	}
++	return c.drop(0, e)
++}
++
++// rename generates a new clause by renaming all variables to freshly created
++// variables.
++func (c *Clause) rename() *Clause {
++	// Note: since all variables in head are also in body, we can ignore head
++	// while generating the environment.
++	var e env
++	for _, part := range c.Body {
++		e = part.shuffle(e)
++	}
++	return c.subst(e)
++}
++
++// hasVar checks if v appears in a litteral.
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T16:26:45-0700
+#*
+#- typo "litteral"
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T13:00:53-0400
+#**
+#-- Fixed.
+#--
++func (l *Literal) hasVar(v Var) bool {
++	for _, arg := range l.Arg {
++		if v == arg {
++			return true
++		}
++	}
++	return false
++}
++
++// Safe checks whether a clause is safe, that is, whether every variable in the
++// head also appears in the body.
++func (c *Clause) Safe() bool {
++	for _, arg := range c.Head.Arg {
++		if v, ok := arg.(Var); ok {
++			safe := false
++			for _, literal := range c.Body {
++				if literal.hasVar(v) {
++					safe = true
++					break
++				}
++			}
++			if !safe {
++				return false
++			}
++		}
++	}
++	return true
++}
++
++// The remainder of this file implements the datalog prover.
++
++// query tracks a set of subgoals, indexed by subgoal target tag.
++type query map[string]*subgoal
++
++// newSubgoal creates a new subgoal and adds it to the query's subgoal set.
++func (q query) newSubgoal(target *Literal, waiters []*waiter) *subgoal {
++	sg := &subgoal{target, make(factSet), waiters}
++	q[target.tag()] = sg
++	return sg
++}
++
++// findSubgoal returns the appropriate subgoal from the query's subgoal set.
++func (q query) findSubgoal(target *Literal) *subgoal {
++	return q[target.tag()]
++}
++
++// factSet tracks a set of facts, indexed by tag.
++type factSet map[string]*Literal
++
++type subgoal struct {
++	target  *Literal  // e.g. ancestor(X, Y)
++	facts   factSet   // facts that unify with target, e.g. ancestor(alice, bob)
++	waiters []*waiter // waiters such that target unifies with waiter.rule.body[0]
++}
++
++// waiter is a (subgoal, rule) pair, where rule.head unifies with
++// subgoal.target.
++type waiter struct {
++	subgoal *subgoal
++	rule    *Clause
++}
++
++// search introduces a new subgoal for target, with waiters to be notified upon
++// discovery of new facts that unify with target.
++// Example target: ancestor(X, Y)
++func (q query) search(target *Literal, waiters ...*waiter) *subgoal {
++	sg := q.newSubgoal(target, waiters)
++	target.Pred.Search(target, func(c *Clause) {
++		q.discovered(sg, c)
++	})
++	return sg
++}
++
++func (p *DBPred) Search(target *Literal, discovered func(c *Clause)) {
++	// Examine each fact or rule clause in the relevant database ...
++	// Example fact: ancestor(alice, bob)
++	// Example rule: ancestor(P, Q) :- parent(P, Q)
++	for _, clause := range p.db {
++		// ... and try to unify target with that clause's head.
++		renamed := clause.rename()
++		e := unify(target, renamed.Head)
++		if e != nil {
++			// Upon success, process the new discovery.
++			discovered(renamed.subst(e))
++		}
++	}
++}
++
++// discovered kicks off processing upon discovery of a fact or rule clause
++// whose head unifies with a subgoal target.
++func (q query) discovered(sg *subgoal, clause *Clause) {
++	if len(clause.Body) == 0 {
++		q.discoveredFact(sg, clause.Head)
++	} else {
++		q.discoveredRule(sg, clause)
++	}
++}
++
++// discoveredRule kicks off processing upon discovery of a rule whose head
++// unifies with a subgoal target.
++func (q query) discoveredRule(rulesg *subgoal, rule *Clause) {
++	bodysg := q.findSubgoal(rule.Body[0])
++	if bodysg == nil {
++		// Nothing on body[0], so search for it, but resume processing later.
++		q.search(rule.Body[0], &waiter{rulesg, rule})
++	} else {
++		// Work is progress on body[0], so resume processing later...
++		bodysg.waiters = append(bodysg.waiters, &waiter{rulesg, rule})
++		// ... but also check facts already known to unify with body[0]. For each
++		// such fact, check if rule can be simplified using information from fact.
++		// If so then we have discovered a new, simpler rule whose head unifies with
++		// the rulesg.target.
++		var simplifiedRules []*Clause
++		for _, fact := range bodysg.facts {
++			r := resolve(rule, fact)
++			if r != nil {
++				simplifiedRules = append(simplifiedRules, r)
++			}
++		}
++		for _, r := range simplifiedRules {
++			q.discovered(rulesg, r)
++		}
++	}
++}
++
++// discoveredRule kicks off processing upon discovery of a fact that unifies
++// with a subgoal target.
++func (q query) discoveredFact(factsg *subgoal, fact *Literal) {
++	if _, ok := factsg.facts[fact.tag()]; !ok {
++		factsg.facts[fact.tag()] = fact
++		// Rusume processing: For each deferred (rulesg, rule) pair, check if rule
++		// can be simplified using information from fact. If so then we have
++		// discovered a new, simpler rule whose head unifies with rulesg.target.
++		for _, waiting := range factsg.waiters {
++			r := resolve(waiting.rule, fact)
++			if r != nil {
++				q.discovered(waiting.subgoal, r)
++			}
++		}
++	}
++}
++
++// resolve simplifies rule using information from fact.
++// Example rule:    ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z)
++// Example fact:    ancestor(alice, bob)
++// Simplified rule: ancestor(alice, Z) :- ancestor(bob, Z)
++func resolve(rule *Clause, fact *Literal) *Clause {
++	if len(rule.Body) == 0 {
++		panic("datalog: not reached -- rule can't have empty body")
++	}
++	if fact.rename() != fact {
++		panic("datalog: not reached -- fact should not have variables")
++	}
++	e := unify(rule.Body[0], fact)
++	if e == nil {
++		return nil
++	}
++	return rule.drop(1, e)
++}
+diff --git a/datalog_test.go b/datalog_test.go
+new file mode 100644
+index 0000000..d95c5a3
+--- /dev/null
++++ b/datalog_test.go
+@@ -0,0 +1,86 @@
++// Copyright (c) 2014, Kevin Walsh.  All rights reserved.
++//
++// This library is free software; you can redistribute it and/or modify
++// it under the terms of the GNU Lesser General Public License as
++// published by the Free Software Foundation; either version 2 of the
++// License, or (at your option) any later version.
++//
++// This library is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++// Lesser General Public License for more details.
++//
++// You should have received a copy of the GNU Lesser General Public
++// License along with this library; if not, write to the Free Software
++// Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
++// USA
++
++package datalog
++
++import (
++	"testing"
++)
++
++func TestAllTags(t *testing.T) {
++	ancestor := new(DBPred)
++	ancestor.SetArity(2)
++
++	alice := new(DistinctConst)
++	bob := new(DistinctConst)
++	carol := new(DistinctConst)
++
++	x := new(DistinctVar)
++	y := new(DistinctVar)
++
++	l1 := NewLiteral(ancestor, alice, bob)
++	l2 := NewLiteral(ancestor, alice, bob)
++	l3 := NewLiteral(ancestor, alice, carol)
++	l4 := NewLiteral(ancestor, alice, x)
++	l5 := NewLiteral(ancestor, alice, y)
++
++	if l1.tag() != l2.tag() || l4.tag() != l5.tag() {
++		t.Fatal("tag mismatch")
++	}
++
++	if l1.tag() == l4.tag() || l1.tag() == l3.tag() {
++		t.Fatal("false tag match")
++	}
++}
++
++func TestProver(t *testing.T) {
++	ancestor := new(DBPred)
++	ancestor.SetArity(2)
++
++	alice := new(DistinctConst)
++	bob := new(DistinctConst)
++	carol := new(DistinctConst)
++
++	x := new(DistinctVar)
++	y := new(DistinctVar)
++	z := new(DistinctVar)
++
++	// ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z)
++	rule := NewClause(NewLiteral(ancestor, x, z),
++		NewLiteral(ancestor, x, y), NewLiteral(ancestor, y, z))
++	if err := rule.Assert(); err != nil {
++		t.Fatal(err.Error())
++	}
++
++	fact1 := NewClause(NewLiteral(ancestor, alice, bob))
++	if err := fact1.Assert(); err != nil {
++		t.Fatal(err.Error())
++	}
++
++	fact2 := NewClause(NewLiteral(ancestor, bob, carol))
++	if err := fact2.Assert(); err != nil {
++		t.Fatal(err.Error())
++	}
++
++	ans := NewLiteral(ancestor, x, y).Query()
++	if ans == nil {
++		t.Fatal("query failed")
++	}
++	if len(ans) != 3 {
++		t.Fatal("query got wrong number of answers")
++	}
++}
+diff --git a/dlengine/dlengine.go b/dlengine/dlengine.go
+new file mode 100644
+index 0000000..55d168f
+--- /dev/null
++++ b/dlengine/dlengine.go
+@@ -0,0 +1,338 @@
++// Copyright (c) 2014, Kevin Walsh.  All rights reserved.
++//
++// This library is free software; you can redistribute it and/or modify
++// it under the terms of the GNU Lesser General Public License as
++// published by the Free Software Foundation; either version 2 of the
++// License, or (at your option) any later version.
++//
++// This library is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++// Lesser General Public License for more details.
++//
++// You should have received a copy of the GNU Lesser General Public
++// License along with this library; if not, write to the Free Software
++// Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
++// USA
++
++// This code borrows heavily from the lexer design and implementation for the
++// template package. See http://golang.org/src/pkg/text/template/parse/parse.go
++
++// Package dlengine provides a text-based Datalog interpreter. This package also
++// provides pretty-printing for datalog literals, predicates, etc.
++package dlengine
++
++import (
++	"fmt"
++	"strconv"
++
++	"github.com/kevinawalsh/datalog"
++)
++
++// Var represents a variable with a name, e.g. X, Y. Name should start with
++// uppercase and follow traditional datalog syntax.
++type Var struct {
++	Name string
++	datalog.DistinctVar
++}
++
++// NewVar returns a Var with the given name.
++func NewVar(name string) *Var {
++	v := new(Var)
++	v.Name = name
++	return v
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:34:33-0700
+#*
+#- Why not return &Var{Name: name} ?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T13:01:12-0400
+#**
+#-- Fixed.
++}
++
++func (v *Var) String() string {
++	return v.Name
++}
++
++// Quoted represents a quoted string constant, e.g. "Alice", "Hello\nWorld".
++type Quoted struct {
++	Value string
++	datalog.DistinctConst
++}
++
++func (q *Quoted) String() string {
++	return strconv.Quote(q.Value)
++}
++
++// NewQuoted returns a Quoted with the given value.
++func NewQuoted(value string) *Quoted {
++	q := new(Quoted)
++	q.Value = value
++	return q
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:35:03-0700
+#*
+#- return &Quoted{Value: value}
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T13:15:08-0400
+#**
+#-- Fixed.
+#--
++}
++
++// Ident represents a bare identifier constant, e.g. alice, -42. Value should
++// start with non-uppercase and follow traditional datalog syntax.
++type Ident struct {
++	Value string
++	datalog.DistinctConst
++}
++
++func (i *Ident) String() string {
++	return i.Value
++}
++
++// NewIdent returns an Ident with the given value.
++func NewIdent(value string) *Ident {
++	i := new(Ident)
++	i.Value = value
++	return i
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:35:34-0700
+#*
+#- ditto, and so on.
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T13:15:32-0400
+#**
+#-- Fixed, except for the SetArity call. Sadly, I couldn't find a clean way to
+#-- make that case entirely clean, but I added commments explaining why.
+#--
++}
++
++// Pred represents a database-defined predicate with a name and arity, e.g.
++// ancestor/2. Name should start with non-uppercase and follow traditional
++// datalog syntax.
++type Pred struct {
++	Name string
++	datalog.DBPred
++}
++
++func (p *Pred) String() string {
++	return p.Name
++}
++
++// NewPred returns a Pred with the given name and arity.
++func NewPred(name string, arity int) *Pred {
++	p := new(Pred)
++	p.Name = name
++	p.SetArity(arity)
++	return p
++}
++
++// NewRule returns a new clause with the given head and body literals.
++func NewRule(head *datalog.Literal, body ...*datalog.Literal) *datalog.Clause {
++	return &datalog.Clause{Head: head, Body: body}
++}
++
++// Engine maintains state for the datalog prover. The main task of the engine is
++// to map a given piece of text to existing Var, Ident, Quoted, and Pred
++// objects. Because go does not provide weak references, reference counting is
++// needed to ensure that objects that are no longer used are removed from the
++// Engine to be garbage collected.
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:36:49-0700
+#*
+#- Is this still true? I don't see reference counting here.
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T13:36:22-0400
+#**
+#-- Yes it is. See track(), trackObject(), and trackLiteral().
+#--
++type Engine struct {
++	Term     map[string]datalog.Term // live variables, constants, and identifiers
++	Pred     map[string]datalog.Pred // live predicates
++	refCount map[interface{}]int
++}
++
++// Construct a new engine.
++func NewEngine() *Engine {
++	return &Engine{
++		Term:     make(map[string]datalog.Term),
++		Pred:     make(map[string]datalog.Pred),
++		refCount: make(map[interface{}]int),
++	}
++}
++
++// Add the given predicate to the engine. This can be used to add custom
++// predicates like Equals to the engine. It can also be used to add the same
++// predicate to multiple engines (they will then share state for that
++// predicate). Any previous predicate with same name is replaced.
++func (e *Engine) AddPred(p datalog.Pred) {
++	id := fmt.Sprintf("%v", p) + "/" + strconv.Itoa(p.Arity())
++	e.Pred[id] = p
++}
++
++func (e *Engine) Process(name, input string) (assertions, retractions, queries, errors int) {
++	pgm, err := parse(name, input)
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:38:00-0700
+#*
+#- Doc string?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T13:43:55-0400
+#**
+#-- Fixed.
+#--
++	if err != nil {
++		errors++
++		fmt.Printf("datalog: %s", err.Error())
++		return
++	}
++	for _, node := range pgm.nodeList {
++		switch node := node.(type) {
++		case *actionNode:
++			if node.action == actionAssert {
++				err = e.assert(node.clause, true)
++				assertions++
++			} else {
++				err = e.retract(node.clause, true)
++				retractions++
++			}
++		case *queryNode:
++			err = e.query(node.literal)
++			queries++
++		default:
++			panic("not reached")
++		}
++		if err != nil {
++			fmt.Printf("datalog: %s:%d: %s\n", name, node.Position(), err.Error())
++			errors++
++		} else {
++			fmt.Printf("OK\n")
++		}
++	}
++	return
++}
++
++func (e *Engine) Batch(name, input string) (assertions, retractions int, err error) {
++	pgm, err := parse(name, input)
++	if err != nil {
++		return
++	}
++	for _, node := range pgm.nodeList {
++		switch node := node.(type) {
++		case *actionNode:
++			if node.action == actionAssert {
++				err = e.assert(node.clause, false)
++				assertions++
++			} else {
++				err = e.retract(node.clause, false)
++				retractions++
++			}
++		case *queryNode:
++			// ignore
++		default:
++			panic("not reached")
++		}
++		if err != nil {
++			return
++		}
++	}
++	return
++}
++
++func (e *Engine) assert(clause *clauseNode, interactive bool) error {
++	c := e.recoverClause(clause)
++	if interactive {
++		fmt.Printf("Assert: %s\n", c)
++	}
++	err := c.Assert()
++	e.track(c, +1)
++	return err
++}
++
++func (e *Engine) retract(clause *clauseNode, interactive bool) error {
++	c := e.recoverClause(clause)
++	if interactive {
++		fmt.Printf("Retract: %s\n", c)
++	}
++	err := c.Retract()
++	e.track(c, -1)
++	return err
++}
++
++func (e *Engine) query(literal *literalNode) error {
++	l := e.recoverLiteral(literal)
++	fmt.Printf("Query: %s\n", l)
++	a := l.Query()
++	fmt.Println(a)
++	return nil
++}
++
++func (e *Engine) Assert(assertion string) error {
++	pgm, err := parse("assert", assertion)
++	if err != nil {
++		return err
++	}
++	if len(pgm.nodeList) != 1 {
++		return fmt.Errorf("datalog: expecting one assertion: %s", assertion)
++	}
++	node, ok := pgm.nodeList[0].(*actionNode)
++	if !ok {
++		return fmt.Errorf("datalog: expecting assertion: %s", assertion)
++	}
++	return e.assert(node.clause, false)
++}
++
++func (e *Engine) Retract(retraction string) error {
++	pgm, err := parse("retract", retraction)
++	if err != nil {
++		return err
++	}
++	if len(pgm.nodeList) != 1 {
++		return fmt.Errorf("datalog: expecting one retraction: %s", retraction)
++	}
++	node, ok := pgm.nodeList[0].(*actionNode)
++	if !ok {
++		return fmt.Errorf("datalog: expecting retraction: %s", retraction)
++	}
++	return e.retract(node.clause, false)
++}
++
++func (e *Engine) Query(query string) (datalog.Answers, error) {
++	pgm, err := parse("query", query)
++	if err != nil {
++		return nil, err
++	}
++	if len(pgm.nodeList) != 1 {
++		return nil, fmt.Errorf("datalog: expecting one query: %s", query)
++	}
++	node, ok := pgm.nodeList[0].(*queryNode)
++	if !ok {
++		return nil, fmt.Errorf("datalog: expecting query: %s", query)
++	}
++	l := e.recoverLiteral(node.literal)
++	return l.Query(), nil
++}
++
++func (e *Engine) recoverClause(clause *clauseNode) *datalog.Clause {
++	head := e.recoverLiteral(clause.head)
++	body := make([]*datalog.Literal, len(clause.nodeList))
++	for i, node := range clause.nodeList {
++		body[i] = e.recoverLiteral(node.(*literalNode))
++	}
++	return NewRule(head, body...)
++}
++
++func (e *Engine) recoverLiteral(literal *literalNode) *datalog.Literal {
++	name := literal.predsym
++	arity := len(literal.nodeList)
++	id := name + "/" + strconv.Itoa(arity)
++	p, ok := e.Pred[id]
++	if !ok {
++		p = NewPred(name, arity)
++		e.Pred[id] = p
++	}
++	arg := make([]datalog.Term, arity)
++	for i, n := range literal.nodeList {
++		leaf := n.(*leafNode)
++		t, ok := e.Term[leaf.val]
++		if !ok {
++			switch n.Type() {
++			case nodeIdentifier:
++				t = NewIdent(leaf.val)
++			case nodeString:
++				t = NewQuoted(leaf.val)
++			case nodeVariable:
++				t = NewVar(leaf.val)
++			default:
++				panic("not reached")
++			}
++			e.Term[leaf.val] = t
++		}
++		arg[i] = t
++	}
++	return datalog.NewLiteral(p, arg...)
++}
++
++func (e *Engine) track(c *datalog.Clause, inc int) {
++	e.trackLiteral(c.Head, inc)
++	for _, l := range c.Body {
++		e.trackLiteral(l, inc)
++	}
++}
++
++func (e *Engine) trackLiteral(l *datalog.Literal, inc int) {
++	e.trackObject(l.Pred, inc)
++	for _, t := range l.Arg {
++		e.trackObject(t, inc)
++	}
++}
++
++func (e *Engine) trackObject(obj interface{}, inc int) {
++	count, ok := e.refCount[obj]
++	if !ok {
++		count = 0
++	}
++	count += inc
++	if count <= 0 {
++		delete(e.refCount, obj)
++	} else {
++		e.refCount[obj] = count
++	}
++}
+diff --git a/dlengine/dlengine_test.go b/dlengine/dlengine_test.go
+new file mode 100644
+index 0000000..2f7eda4
+--- /dev/null
++++ b/dlengine/dlengine_test.go
+@@ -0,0 +1,196 @@
++// Copyright (c) 2014, Kevin Walsh.  All rights reserved.
++//
++// This library is free software; you can redistribute it and/or modify
++// it under the terms of the GNU Lesser General Public License as
++// published by the Free Software Foundation; either version 2 of the
++// License, or (at your option) any later version.
++//
++// This library is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++// Lesser General Public License for more details.
++//
++// You should have received a copy of the GNU Lesser General Public
++// License along with this library; if not, write to the Free Software
++// Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
++// USA
++
++package dlengine
++
++import (
++	"bufio"
++	"fmt"
++	"io/ioutil"
++	"math/rand"
++	"os"
++	"testing"
++)
++
++func TestLexer(t *testing.T) {
++	l := lex("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n"+
++		"ancestor(alice, bob).\n"+
++		"ancestor(X, Y)?\n")
++	for {
++		item := l.nextToken()
++		// fmt.Println(item)
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:41:31-0700
+#*
+#- unused line; delete? There are others like this below. Maybe you want to use
+#- something like github.com/golang/glog with logging levels?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T13:44:48-0400
+#**
+#-- Deleted.
+#--
++		if item.typ == itemError {
++			t.Fatal("lex error: %v", item)
++		}
++		if item.typ == itemEOF {
++			break
++		}
++	}
++}
++
++func TestParser(t *testing.T) {
++	node, err := parse("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n"+
++		"ancestor(alice, bob).\n"+
++		"ancestor(X, Y)?\n")
++	if err != nil {
++		t.Fatal(err.Error())
++	}
++	if node == nil {
++		t.Fatal("missing parse node")
++	}
++	// fmt.Println(node)
++}
++
++func setup(t *testing.T, input string, asserts, retracts, queries, errors int) *Engine {
++	e := NewEngine()
++	a, r, q, errs := e.Process("test", input)
++	if a != asserts || r != retracts || q != queries || errs != errors {
++		t.Fatalf("setup process failed: %d %d %d %d\ninput = %s", a, r, q, errs, input)
++	}
++	// fmt.Printf("setup: %s\n", input)
++	return e
++}
++
++func TestEngine(t *testing.T) {
++	input := `
++		ancestor(alice, bob).
++		ancestor(X, Y)?
++		ancestor(bob, carol).
++		ancestor(X, Y)?
++		ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).
++		ancestor(X, Y)?
++		ancestor(X)?
++		ancestor(bob, carol)~
++		ancestor(alice, carol)?
++		`
++	setup(t, input, 3, 1, 5, 0)
++}
++
++type vertex []int
++
++type graph struct {
++	n int
++	e int
++	v []vertex
++}
++
++func path(g *graph, src, dst int) bool {
++	// visit src
++	if src == dst {
++		return true
++	}
++	visited := make([]bool, g.n)
++	visited[src] = true
++	q := make([]int, g.n, g.n)
++	n := 0
++	q[n] = src
++	n++
++
++	for n > 0 {
++		n--
++		v := q[n]
++		for _, a := range g.v[v] {
++			if !visited[a] {
++				// visit a
++				if a == dst {
++					return true
++				}
++				visited[a] = true
++				q[n] = a
++				n++
++			}
++		}
++	}
++	return false
++}
++
++func TestPath(t *testing.T) {
++	// rng := rand.New(rand.NewSource(1))
++
++	filename := "test.dl"
++
++	n := 100
++	e := 200
++	f, err := os.Create(filename)
++	if err != nil {
++		t.Fatal(err.Error())
++	}
++	out := bufio.NewWriter(f)
++	fmt.Fprintf(out, "%% datalog path-finding test\n")
++	fmt.Fprintf(out, "%% n = %d vertices\n", n)
++	fmt.Fprintf(out, "%% e = %d directed edges\n", e)
++	fmt.Fprintf(out, "path(X, Y) :- edge(X, Y).\n")
++	fmt.Fprintf(out, "path(X, Z) :- path(X, Y), path(Y, Z).\n")
++
++	g := &graph{n, e, make([]vertex, n)}
++	for i := 0; i < e; i++ {
++		x := rand.Intn(n)
++		y := rand.Intn(n)
++		fmt.Fprintf(out, "edge(v-%d, v-%d).\n", x, y)
++		g.v[x] = append(g.v[x], y)
++	}
++	out.Flush()
++	f.Close()
++
++	input, err := ioutil.ReadFile(filename)
++	if err != nil {
++		t.Fatal(err.Error())
++	}
++
++	trials := 5
++	qx := make([]int, trials)
++	qy := make([]int, trials)
++	qa := make([]bool, trials)
++
++	fmt.Printf("generating %d trials\n", trials)
++	pos := 0
++	for i := 0; i < trials; i++ {
++		qx[i] = rand.Intn(n)
++		qy[i] = rand.Intn(n)
++		qa[i] = path(g, qx[i], qy[i])
++		if qa[i] {
++			pos++
++		}
++	}
++	fmt.Printf("%d positive trials, %d negative trials\n", pos, trials-pos)
++
++	fmt.Printf("loading database\n")
++	engine := NewEngine()
++	a, r, err := engine.Batch(filename, string(input))
++	if err != nil {
++		t.Fatal(err.Error())
++	}
++	fmt.Printf("loaded %d assertions, %d retractions\n", a, r)
++	fmt.Printf("querying database for %d trials\n", trials)
++	for i := 0; i < trials; i++ {
++		query := fmt.Sprintf("path(v-%d, v-%d)?", qx[i], qy[i])
++		fmt.Printf("query %s should be %v\n", query, qa[i])
++		a, err := engine.Query(query)
++		if err != nil {
++			t.Fatal(err.Error())
++		}
++		if (len(a) > 0) != qa[i] {
++			t.Fatalf("wrong on query %d: %s was %v, should be %v", i, query, a, qa[i])
++		} else {
++			fmt.Printf("ok\n")
++		}
++	}
++
++	// Anecdotal benchmark results:
++	// go test completes in about 3.4 seconds on my system
++	// datalog's interp is about 13.5 seconds with same system, file, and query
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:47:11-0700
+#*
+#- Maybe turn this into a "Benchmark*" program so it can be benchmarked with go
+#- test?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T14:06:47-0400
+#**
+#-- Done. I did not know of this nice feature. Thanks!
+#--
++}
+diff --git a/dlengine/lexer.go b/dlengine/lexer.go
+new file mode 100644
+index 0000000..b2cc4b5
+--- /dev/null
++++ b/dlengine/lexer.go
+@@ -0,0 +1,287 @@
++// Copyright (c) 2014, Kevin Walsh.  All rights reserved.
++//
++// This library is free software; you can redistribute it and/or modify
++// it under the terms of the GNU Lesser General Public License as
++// published by the Free Software Foundation; either version 2 of the
++// License, or (at your option) any later version.
++//
++// This library is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++// Lesser General Public License for more details.
++//
++// You should have received a copy of the GNU Lesser General Public
++// License along with this library; if not, write to the Free Software
++// Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
++// USA
++
++// This code borrows heavily from the lexer design and implementation described
++// by Rob Pike, "Lexical Scanning in Go", GTUG Syndey, Aug 30, 2011.
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:48:28-0700
+#*
+#- typo "Syndey"
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T14:08:06-0400
+#**
+#-- Fixed.
+#--
++// See: http://cuddle.googlecode.com/hg/talk/lex.html#slide-40
++
++package dlengine
++
++import (
++	"fmt"
++	"strings"
++	"unicode"
++	"unicode/utf8"
++)
++
++// token represents a value returned from the lexer.
++type token struct {
++	typ itemType // Type, such as itemNumber.
++	val string   // Value, such as "23.2".
++}
++
++// itemType identifies the type of lex items.
++type itemType int
++
++// Comments: '%' to end of line (but not in strings), ignored
++// Whitespace: ignored, except in strings
++// Punctuation: '(’, ',’, ')’, ':-’, '.’, '~’, '?’, and '"’
++// Note: We don't treat '=' specially or as punctuation, and we don't handle
++// infix operators.
++
++const (
++	itemError itemType = iota // error occurred; value is text of error
++	itemEOF
++	itemQuestion // "?"
++	itemWhen     // ":-"
++	itemLP       // "("
++	itemRP       // ")"
++	itemComma    // ","
++	// itemEqual   // "="
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:49:52-0700
+#*
+#- Why is this commented out?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T14:09:04-0400
+#**
+#-- Added TODO: this is for possible future support for infix "=" predicate.
+#--
++	itemDot        // "."
++	itemTilde      // "~"
++	itemVariable   // X, Alice, Hunter_22
++	itemIdentifier // alice, 7, -42, x
++	itemString     // "Alice"
++)
++
++func (i token) String() string {
++	switch i.typ {
++	case itemEOF:
++		return "EOF"
++	case itemError:
++		return i.val
++	case itemVariable:
++		return fmt.Sprintf("var[%q]", i.val)
++	case itemIdentifier:
++		return fmt.Sprintf("ident[%q]", i.val)
++	case itemString:
++		return fmt.Sprintf("str[%q]", i.val)
++	default:
++		return fmt.Sprintf("punct[%q]", i.val)
++	}
++}
++
++// stateFn represents a state transition for the scanner.
++type stateFn func(*lexer) stateFn
++
++// lexer holds the state of the scanner.
++type lexer struct {
++	name  string     // used only for error reports.
++	input string     // the string being scanned.
++	start int        // start position of this token.
++	pos   int        // current position in the input.
++	width int        // width of last rune read from input.
++	state stateFn    // current state.
++	items chan token // channel of scanned items.
++}
++
++// emit passes an token back to the client.
++func (l *lexer) emit(t itemType) {
++	l.items <- token{t, l.input[l.start:l.pos]}
++	l.start = l.pos
++}
++
++const leftMeta = "{{"
++const rightMeta = "}}"
++
++const eof rune = 0
++
++func lexMain(l *lexer) stateFn {
++	// at the top level
++	for {
++		switch r := l.next(); {
++		case r == eof:
++			l.emit(itemEOF)
++			return nil
++		case unicode.IsSpace(r):
++			l.ignore()
++		case r == '%':
++			l.backup()
++			return lexComment
++		case r == '.':
++			l.emit(itemDot)
++			return lexMain
++		case r == '~':
++			l.emit(itemTilde)
++			return lexMain
++		case r == '(':
++			l.emit(itemLP)
++			return lexMain
++		case r == ')':
++			l.emit(itemRP)
++			return lexMain
++		case r == '?':
++			l.emit(itemQuestion)
++			return lexMain
++		case r == ':':
++			l.backup()
++			if strings.HasPrefix(l.input[l.pos:], ":-") {
++				l.pos += 2
++				l.emit(itemWhen)
++				return lexMain
++			} else {
++				return l.errorf(`expecting ":-"`)
++			}
++		case r == ',':
++			l.emit(itemComma)
++			return lexMain
++		case r == '"':
++			l.backup()
++			return lexString
++		case 'A' <= r && r <= 'Z':
++			l.backup()
++			return lexVariable
++		case unicode.IsPrint(r):
++			l.backup()
++			return lexIdentifier
++		default:
++			return l.errorf("unexpected rune: %v", r)
++		}
++	}
++}
++
++func lexString(l *lexer) stateFn {
++	escape := false
++	for {
++		switch r := l.next(); {
++		case r == eof:
++			return l.errorf("unexpected eof in string")
++		case escape:
++			escape = false
++		case r == '\\':
++			escape = true
++		case r == '"':
++			l.emit(itemString)
++			return lexMain
++		default:
++			// continue loop
++		}
++	}
++}
++
++func variableRune(r rune) bool {
++	return ('0' <= r && r <= '9') || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || r == '_'
++}
++
++func lexVariable(l *lexer) stateFn {
++	// precondition: l.next() is [A-Z]
++	for {
++		r := l.next()
++		if r == eof || !variableRune(r) {
++			l.backup()
++			l.emit(itemVariable)
++			return lexMain
++		}
++	}
++}
++
++func lexIdentifier(l *lexer) stateFn {
++	// precondition: l.next() is printable, not banned punctuation, not [A-Z]
++	invalid := `?:()~".,%` // '='
++	for {
++		r := l.next()
++		if r == eof || unicode.IsSpace(r) || strings.IndexRune(invalid, r) >= 0 || !unicode.IsPrint(r) {
++			l.backup()
++			l.emit(itemIdentifier)
++			return lexMain
++		}
++	}
++}
++
++func lexComment(l *lexer) stateFn {
++	// precondition: l.next() is '%'
++	for {
++		r := l.next()
++		if r == eof {
++			l.backup()
++			l.ignore()
++			return lexMain
++		} else if r == '\n' {
++			l.ignore()
++			return lexMain
++		}
++	}
++}
++
++// next returns the next rune in the input.
++func (l *lexer) next() (r rune) {
++	if l.pos >= len(l.input) {
++		l.width = 0
++		return eof
++	}
++	r, l.width = utf8.DecodeRuneInString(l.input[l.pos:])
++	l.pos += l.width
++	return r
++}
++
++// ignore skips over the pending input before this point.
++func (l *lexer) ignore() {
++	l.start = l.pos
++}
++
++// backup steps back one rune. Can be called only once per call of next.
++func (l *lexer) backup() {
++	l.pos -= l.width
++	l.width = 0
++}
++
++// errorf emits an error token and terminates the scan
++// by returning nil as the next state.
++func (l *lexer) errorf(format string, args ...interface{}) stateFn {
++	l.items <- token{
++		itemError,
++		fmt.Sprintf(format, args...),
++	}
++	return nil
++}
++
++// lex creates a new scanner for the input string.
++func lex(name, input string) *lexer {
++	return &lexer{
++		name:  name,
++		input: input,
++		state: lexMain,
++		items: make(chan token, 2), // Two items is sufficient.
++	}
++}
++
++// nextToken returns the next token from the input.
++func (l *lexer) nextToken() token {
++	for {
++		select {
++		case token := <-l.items:
++			return token
++		default:
++			l.state = l.state(l)
++		}
++	}
++	panic("not reached")
++}
++
++// func main() {
++// 	l := lex("test", "ancestor(X, Z) :- ancestor(X, Y), ancestor(Y, Z).\n" +
++// 									 "ancestor(alice, bob).\n" +
++// 									 "ancestor(X, Y)?\n")
++// 	for {
++// 		token := l.nextToken()
++// 		fmt.Println(token)
++// 		if token.typ == itemEOF || token.typ == itemError {
++// 			break
++// 		}
++// 	}
++// }
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:57:16-0700
+#*
+#- Maybe remove this now that you have test code?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T14:10:09-0400
+#**
+#-- Gone.
+#--
+diff --git a/dlengine/parser.go b/dlengine/parser.go
+new file mode 100644
+index 0000000..c662ad2
+--- /dev/null
++++ b/dlengine/parser.go
+@@ -0,0 +1,333 @@
++// Copyright (c) 2014, Kevin Walsh.  All rights reserved.
++//
++// This library is free software; you can redistribute it and/or modify
++// it under the terms of the GNU Lesser General Public License as
++// published by the Free Software Foundation; either version 2 of the
++// License, or (at your option) any later version.
++//
++// This library is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++// Lesser General Public License for more details.
++//
++// You should have received a copy of the GNU Lesser General Public
++// License along with this library; if not, write to the Free Software
++// Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
++// USA
++
++// This code borrows heavily from the lexer design and implementation for the
++// template package. See http://golang.org/src/pkg/text/template/parse/parse.go
++
++package dlengine
++
++import (
++	"fmt"
++	"strings"
++)
++
++// A node is an element in the parse tree.
++type node interface {
++	Type() nodeType
++	String() string
++	Copy() node
++	Position() pos
++}
++
++// pos represents a byte position in the original input text from which
++// this template was parsed.
++type pos int
++
++func (p pos) Position() pos {
++	return p
++}
++
++// nodeType identifies the type of a parse tree node.
++type nodeType int
++
++func (t nodeType) Type() nodeType {
++	return t
++}
++
++const (
++	nodeProgram nodeType = iota // (assertion | retraction | query)*
++	nodeAction                  // clause [ "." | "~" ]
++	nodeQuery                   // literal "?"
++	nodeClause                  // literal | literal ":-" literal ("," literal)*
++	nodeLiteral                 // predsym | predsym "(" term ("," term)* ")"
++	// nodePredSym                 // identifier | string
++	// nodeTerm                    // variable | constant
++	// nodeConstant                // identifier | string
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:58:01-0700
+#*
+#- More commented-out code.
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T14:14:54-0400
+#**
+#-- Fixed.
+#--
++	nodeIdentifier
++	nodeString
++	nodeVariable
++)
++
++// nodeList stores a list of nodes in lexical order.
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T22:59:06-0700
+#*
+#- "lexical" (== alphabetical) order or "lexed" order?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T14:15:28-0400
+#**
+#-- Fixed comment: the order they were lexed.
+#--
++type nodeList []node
++
++func (l *nodeList) append(n node) {
++	*l = append(*l, n)
++}
++
++func (l *nodeList) join(sep string) string {
++	if *l == nil {
++		return ""
++	}
++	s := make([]string, len(*l))
++	for i, n := range *l {
++		s[i] = n.String()
++	}
++	return strings.Join(s, sep)
++}
++
++func (l *nodeList) dup() nodeList {
++	if *l == nil {
++		return *l
++	}
++	s := make([]node, len(*l))
++	for i, n := range *l {
++		s[i] = n.Copy()
++	}
++	return s
++}
++
++// programNode holds a sequence of assertion, retraction, and query nodes.
++type programNode struct {
++	nodeType
++	pos
++	nodeList
++}
++
++func newProgram(pos pos) *programNode {
++	return &programNode{nodeProgram, pos, nil}
++}
++
++func (n *programNode) String() string {
++	return n.join("\n")
++}
++
++func (n *programNode) Copy() node {
++	return &programNode{nodeProgram, n.pos, n.nodeList.dup()}
++}
++
++// actionNode holds a clause and an actionType.
++type actionNode struct {
++	nodeType
++	pos
++	clause *clauseNode
++	action actionType
++}
++
++type actionType bool
++
++const actionAssert actionType = true
++const actionRetract actionType = false
++
++func newAction(pos pos, clause *clauseNode, action actionType) *actionNode {
++	return &actionNode{nodeAction, pos, clause, action}
++}
++
++func (n *actionNode) String() string {
++	if n.action == actionAssert {
++		return n.clause.String() + "."
++	} else {
++		return n.clause.String() + "~"
++	}
++}
++
++func (n *actionNode) Copy() node {
++	return &actionNode{nodeAction, n.pos, n.clause.Copy().(*clauseNode), n.action}
++}
++
++// queryNode holds a literal.
++type queryNode struct {
++	nodeType
++	pos
++	literal *literalNode
++}
++
++func newQuery(pos pos, literal *literalNode) *queryNode {
++	return &queryNode{nodeQuery, pos, literal}
++}
++
++func (n *queryNode) String() string {
++	return n.literal.String() + "?"
++}
++
++func (n *queryNode) Copy() node {
++	return &queryNode{nodeQuery, n.pos, n.literal.Copy().(*literalNode)}
++}
++
++// clauseNode holds a head literal and a sequence of body literals.
++type clauseNode struct {
++	nodeType
++	pos
++	head *literalNode
++	nodeList
++}
++
++func newClause(pos pos, head *literalNode) *clauseNode {
++	return &clauseNode{nodeClause, pos, head, nil}
++}
++
++func (n *clauseNode) String() string {
++	if len(n.nodeList) == 0 {
++		return n.head.String()
++	} else {
++		return n.head.String() + " :- " + n.join(", ")
++	}
++}
++
++func (n *clauseNode) Copy() node {
++	return &clauseNode{nodeClause, n.pos, n.head.Copy().(*literalNode), n.nodeList.dup()}
++}
++
++// literalNode holds a predsym and a sequence of terms.
++type literalNode struct {
++	nodeType
++	pos
++	predsym string
++	nodeList
++}
++
++func newLiteral(pos pos, predsym string) *literalNode {
++	return &literalNode{nodeLiteral, pos, predsym, nil}
++}
++
++func (n *literalNode) String() string {
++	if len(n.nodeList) == 0 {
++		return n.predsym
++	} else {
++		return n.predsym + "(" + n.join(", ") + ")"
++	}
++}
++
++func (n *literalNode) Copy() node {
++	return &literalNode{nodeLiteral, n.pos, n.predsym, n.nodeList.dup()}
++}
++
++// leafNode holds a string.
++type leafNode struct {
++	nodeType
++	pos
++	val string
++}
++
++func newLeaf(t nodeType, pos pos, val string) *leafNode {
++	return &leafNode{t, pos, val}
++}
++
++func (n *leafNode) String() string {
++	return n.val
++}
++
++func (n *leafNode) Copy() node {
++	return &leafNode{n.nodeType, n.pos, n.val}
++}
++
++// parser holds the state of the recursive descent parser.
++type parser struct {
++	lex   *lexer
++	pos   pos
++	token token // single-token lookahead.
++}
++
++func (parser *parser) next() {
++	parser.pos = pos(parser.lex.pos)
++	parser.token = parser.lex.nextToken()
++}
++
++func (parser *parser) parseTerm() (node, error) {
++	var n node
++	switch parser.token.typ {
++	case itemVariable:
++		n = newLeaf(nodeVariable, parser.pos, parser.token.val)
++	case itemIdentifier:
++		n = newLeaf(nodeIdentifier, parser.pos, parser.token.val)
++	case itemString:
++		n = newLeaf(nodeString, parser.pos, parser.token.val)
++	default:
++		return nil, fmt.Errorf("datalog: expecting variable or constant, found: %v", parser.token)
++	}
++	parser.next()
++	return n, nil
++}
++
++func (parser *parser) parseLiteral() (*literalNode, error) {
++	if parser.token.typ != itemIdentifier && parser.token.typ != itemString {
++		return nil, fmt.Errorf("datalog: expecting identifier or string, found: %v", parser.token)
++	}
++	literal := newLiteral(parser.pos, parser.token.val)
++	parser.next()
++	if parser.token.typ != itemLP {
++		return literal, nil
++	}
++	parser.next()
++	term, err := parser.parseTerm()
++	if err != nil {
++		return nil, err
++	}
++	literal.append(term)
++	for parser.token.typ != itemRP {
++		if parser.token.typ != itemComma {
++			return nil, fmt.Errorf("datalog: expecting ',' or ')', found: %v", parser.token)
++		}
++		parser.next()
++		term, err = parser.parseTerm()
++		if err != nil {
++			return nil, err
++		}
++		literal.append(term)
++	}
++	parser.next()
++	return literal, nil
++}
++
++func parse(name, input string) (*programNode, error) {
++	l := lex(name, input)
++	parser := &parser{lex: l}
++	parser.next()
++	pgm := newProgram(parser.pos)
++	for {
++		switch parser.token.typ {
++		case itemEOF:
++			return pgm, nil
++		default:
++			literal, err := parser.parseLiteral()
++			if err != nil {
++				return nil, err
++			}
++			if parser.token.typ == itemQuestion {
++				pgm.append(newQuery(parser.pos, literal))
++				parser.next()
++			} else {
++				clause := newClause(parser.pos, literal)
++				if parser.token.typ == itemWhen {
++					parser.next()
++					body, err := parser.parseLiteral()
++					if err != nil {
++						return nil, err
++					}
++					clause.append(body)
++					for parser.token.typ == itemComma {
++						parser.next()
++						body, err = parser.parseLiteral()
++						if err != nil {
++							return nil, err
++						}
++						clause.append(body)
++					}
++				}
++				if parser.token.typ == itemDot {
++					pgm.append(newAction(parser.pos, clause, actionAssert))
++					parser.next()
++				} else if parser.token.typ == itemTilde {
++					pgm.append(newAction(parser.pos, clause, actionRetract))
++					parser.next()
++				} else {
++					return nil, fmt.Errorf("datalog: unexpected: %v", parser.token)
++				}
++			}
++		}
++	}
++}
+diff --git a/dlprim/dlprim.go b/dlprim/dlprim.go
+new file mode 100644
+index 0000000..a041bfc
+--- /dev/null
++++ b/dlprim/dlprim.go
+@@ -0,0 +1,67 @@
++// Copyright (c) 2014, Kevin Walsh.  All rights reserved.
++//
++// This library is free software; you can redistribute it and/or modify
++// it under the terms of the GNU Lesser General Public License as
++// published by the Free Software Foundation; either version 2 of the
++// License, or (at your option) any later version.
++//
++// This library is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++// Lesser General Public License for more details.
++//
++// You should have received a copy of the GNU Lesser General Public
++// License along with this library; if not, write to the Free Software
++// Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
++// USA
++
++// Package dlprim provides custom "primitive" datalog predicates, like Equals.
++package dlprim
++
++import (
++	"errors"
++
++	"github.com/kevinawalsh/datalog"
++)
++
++// Equals is a custom predicate for equality checking, defined by these rules:
++//   =(X, Y) generates no facts.
++//   =(X, c) generates fact =(c, c).
++//   =(c, Y) generates fact =(c, c).
++//   =(c, c) generates fact =(c, c).
++//   =(c1, c2) generates no facts.
++var Equals datalog.Pred
++
++func init() {
++	eq := new(eqPrim)
++	eq.SetArity(2)
++	Equals = eq
++}
++
++type eqPrim struct {
++	datalog.DistinctPred
++}
++
++func (eq *eqPrim) String() string {
++	return "="
++}
++
++func (eq *eqPrim) Assert(c *datalog.Clause) error {
++	return errors.New("datalog: can't assert for custom predicates")
++}
++
++func (eq *eqPrim) Retract(c *datalog.Clause) error {
++	return errors.New("datalog: can't retract for custom predicates")
++}
++
++func (eq *eqPrim) Search(target *datalog.Literal, discovered func(c *datalog.Clause)) {
++	a := target.Arg[0]
++	b := target.Arg[1]
++	if a.Variable() && b.Constant() {
++		discovered(datalog.NewClause(datalog.NewLiteral(eq, b, b)))
++	} else if a.Constant() && b.Variable() {
++		discovered(datalog.NewClause(datalog.NewLiteral(eq, a, a)))
++	} else if a.Constant() && b.Constant() && a == b {
++		discovered(datalog.NewClause(target))
++	}
++}
+#*
+#* author: Tom Roeder
+#* email: tmroeder@google.com
+#* date: 2014-07-24T23:03:11-0700
+#*
+#- What other custom predicates might be useful? E.g., arithmetic ops?
+#- 
+#**
+#** author: Kevin Walsh
+#** email: kwalsh@holycross.edu
+#** date: 2014-07-25T14:15:54-0400
+#**
+#-- Lots. There is one in Tao for subprins, e.g. subrin(a, b) holds iff a is a
+#-- subprin of b. For policies, set operations might be useful, e.g. in_set(a,
+#-- b) holds if a is a member of set b. There could be others for signature
+#-- checking, arithmetic, etc. The datalog distribution gives equality as their
+#-- sole example, so I did too. 
+#--
+diff --git a/dlprim/dlprim_test.go b/dlprim/dlprim_test.go
+new file mode 100644
+index 0000000..ca97a65
+--- /dev/null
++++ b/dlprim/dlprim_test.go
+@@ -0,0 +1,71 @@
++// Copyright (c) 2014, Kevin Walsh.  All rights reserved.
++//
++// This library is free software; you can redistribute it and/or modify
++// it under the terms of the GNU Lesser General Public License as
++// published by the Free Software Foundation; either version 2 of the
++// License, or (at your option) any later version.
++//
++// This library is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++// Lesser General Public License for more details.
++//
++// You should have received a copy of the GNU Lesser General Public
++// License along with this library; if not, write to the Free Software
++// Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
++// USA
++
++package dlprim
++
++import (
++	"testing"
++
++	"github.com/kevinawalsh/datalog/dlengine"
++)
++
++func setup(t *testing.T, input string, asserts, retracts, queries, errors int) *dlengine.Engine {
++	e := dlengine.NewEngine()
++	e.AddPred(Equals)
++	a, r, q, errs := e.Process("test", input)
++	if a != asserts || r != retracts || q != queries || errs != errors {
++		t.Fatalf("setup process failed: %d %d %d %d\ninput = %s", a, r, q, errs, input)
++	}
++	// fmt.Printf("setup: %s\n", input)
++	return e
++}
++
++func check(t *testing.T, e *dlengine.Engine, query string, ans int) {
++	// fmt.Printf("query: %s\n", query)
++	a, err := e.Query(query)
++	if err != nil {
++		t.Fatal(err.Error())
++	}
++	if len(a) != ans {
++		t.Fatalf("expected %d answers, got %d: %v", ans, len(a), a)
++	}
++}
++
++func TestEquals(t *testing.T) {
++	e := setup(t, "z(X) :- =(X, 0).", 1, 0, 0, 0)
++	check(t, e, "z(0)?", 1)
++	check(t, e, "z(7)?", 0)
++	check(t, e, "z(X)?", 1)
++
++	e = setup(t, "z(X) :- =(X, 0). f(X, Y) :- z(X), =(X, Y).", 2, 0, 0, 0)
++	check(t, e, "f(X, Y)?", 1)
++
++	e = setup(t, "z(X) :- =(X, 0). f(X, Y) :- z(Y), =(X, Y).", 2, 0, 0, 0)
++	check(t, e, "f(X, Y)?", 1)
++
++	e = setup(t, "e(X, Y) :- =(X, Y).", 1, 0, 0, 0)
++	check(t, e, "e(X, Y)?", 0)
++
++	e = setup(t, `
++	old(X) :- person(X), age(X, Y), =(Y, 100).
++	person(alice). age(alice, 102).
++	person(bob). age(bob, 100).
++	person(carol). age(carol, 100).`, 7, 0, 0, 0)
++	check(t, e, "old(alice)?", 0)
++	check(t, e, "old(bob)?", 1)
++	check(t, e, "old(X)?", 2)
++}
